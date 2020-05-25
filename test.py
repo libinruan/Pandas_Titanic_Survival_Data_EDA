@@ -58,16 +58,78 @@ print(df_train.describe(include=['O']).T)
 
 #Stat about missing values
 print('-'*30)
-def display_missing(df):
+def displayMissing(df):
     for col in df.columns.tolist():
-        print(f'{col} column missing values (%): {df[col].isnull().sum()}')
+        print(f'{col} column missing values: {df[col].isnull().sum()}')
 
 for df in [df_train, df_test]:
     print(f'{df.name}')
-    display_missing(df)
+    displayMissing(df)
 
-#Extract Cabin Numbers
-df_train['Deck'] = df_train['Cabin'].apply(lambda s: s[0] if pd.notnull(s) else 'M')
+#Check to see if the 2nd half of the combined table are all NaN Survived data
+#(1) iloc works with slicing that includes right endpoint.
+#(2) iloc works with index only, so even though I need 'Survived, I use it separately.
+#(3) isnull() to see if there is any missing value
+df_all.iloc[df_train.shape[0]:,]['Survived'].isnull().all()
+
+#Cabin numbers have clusters
+df_all['Cabin'].value_counts()
+#For example, 'B57 B59 B63 B66' corresponds to five persons
+#in the Ryerson family. People in the same cabin share the same
+#Ticket_alp and Ticket_num. These three variables should be highly
+#correlated.
+df_all.loc[df_all['Cabin']=='B57 B59 B63 B66']
+#'B57 B59 B63 B66' maps to Ticket_alp = 'PC', which is a much larger group.
+df_all.loc[df_all['Ticket_alp']=='PC']['Survived'].sum()
+#We may check later whether each group can be identified or associated with higher servival rate
+#We may also check to see if couples have higher survival rates
+#Check Family Ryerson. The number of SibSp and Parch might have more information.
+
+def getCabinPrefix(df):
+    # 'M' is assigned to missing values
+    df['Deck'] = df['Cabin'].apply(lambda s: s[0] if pd.notnull(s) else 'M')
+    return df
+
+getCabinPrefix(df_all)
+df_all['Deck'].unique()
+
+def getPrefixAndNumber(df, col):
+    # naming the columns to be created
+    col_num = col + '_num'
+    col_alp = col + '_alp'
+
+    # get the last group of contiguous digits
+    df[col_num] = df[col].str.extract(r'(\d+)$')
+    df[col_num].fillna(-1, inplace=True)
+
+    # get the entire string before a space followed by the last digit group
+    df[col_alp] = df[col].str.extract(r'(.*)\ \d+$').replace({'\.':'','/':''},regex=True)
+    df[col_alp].fillna('M', inplace=True)
+    return df
+
+getPrefixAndNumber(df_all, 'Ticket')
+df_all['Ticket_num'] = pd.to_numeric(df_all['Ticket_num'])
+
+#check to see if the extraction works as expected
+colnames = ['Ticket' + s for s in ['','_num','_alp']]
+df_all[colnames]
+
+#survival rate varies across ticket number prefix; it can be a predictor
+#Does ticket prefix associate with family name?
+gtb1 = df_all.iloc[:df_train.shape[0]][['Survived','Ticket_alp']].groupby(['Ticket_alp'])
+gtb1['Survived'].sum()/gtb1['Survived'].count()
+
+##
+
+## Extract names and titles
+
+#Ticket Number Distribution by Pclass and Embarked
+#The plot doesn't help to impute the two missing Embarked value, both of which are in Pclass = 1.
+#The only information gain is that given they share the same ticket number, they should know each
+#other and highly likely embark from either C or S together.
+g = sns.FacetGrid(df_train, col='Pclass', row='Embarked')
+g = g.map(sns.countplot, 'Ticket_num')
+plt.show()
 
 ##Add percentage bar number 1
 
@@ -96,30 +158,7 @@ alive_deck_embarked = df_train[['Deck', 'Embarked', 'Survived']].groupby(['Deck'
 tb3 = alive_deck_embarked['Survived'].sum()/alive_deck_embarked['Survived'].count()
 tb3.sort_values(ascending=False)
 
-##
-def getTicketStrNum(df, col):
-    temp = df.copy()
-    col_num = col + '_num'
-    col_alp = col + '_alp'
-    temp[col_num] = temp[col].str.extract(r'(\d+)$') # get the last group of numbers
-    temp[col_num].fillna(-1, inplace=True)
-    temp[col_alp] = temp[col].str.extract(r'(.*)\ \d+$').replace({'\.':'','/':''},regex=True)
-    temp[col_alp].fillna('M', inplace=True)
-    return temp
-df_train = getTicketStrNum(df_train, 'Ticket')
-df_train['Ticket_num'] = pd.to_numeric(df_train['Ticket_num'])
 
-#survival rate varies across ticket number prefix
-gtb1 = df_train[['Survived','Ticket_alp']].groupby(['Ticket_alp'])
-gtb1['Survived'].sum()/gtb1['Survived'].count()
-
-#Ticket Number Distribution by Pclass and Embarked
-#The plot doesn't help to impute the two missing Embarked value, both of which are in Pclass = 1.
-#The only information gain is that given they share the same ticket number, they should know each
-#other and highly likely embark from either C or S together.
-g = sns.FacetGrid(df_train, col='Pclass', row='Embarked')
-g = g.map(sns.countplot, 'Ticket_num')
-plt.show()
 
 ##
 g = sns.FacetGrid(df_train, col='Pclass', row='Embarked', hue='Deck')
