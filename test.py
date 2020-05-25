@@ -14,6 +14,7 @@
 # ---
 
 ##
+
 import pandas as pd
 import numpy as np
 import matplotlib as mpl
@@ -25,18 +26,19 @@ warnings.filterwarnings('ignore')
 
 #Configure Visualization Defaults
 mpl.style.use('ggplot')
-sns.set_style('white')
 pylab.rcParams['figure.figsize'] = 12,8
+sns.set_style('white')
 pd.set_option('display.max_columns', None)
 
 df_train = pd.read_csv(r'F:\GitHubData\Titanic\train.csv')
 df_test = pd.read_csv(r'F:\GitHubData\Titanic\test.csv')
 df_all = pd.concat([df_train, df_test], join='outer', axis=0)
-comb = [df_train, df_test]
 df_train.name = 'Training data'
 df_test.name = 'Test data'
 print(df_train.info())
 print(df_train.sample(1).T)
+
+# comb = [df_train, df_test]
 
 #Dataset Dimensions
 print('-'*30)
@@ -58,13 +60,25 @@ print(df_train.describe(include=['O']).T)
 print('-'*30)
 def display_missing(df):
     for col in df.columns.tolist():
-        print(f'{col} column missing values (%): {df[col].isnull().sum()/df[col].count():3.2}')
-for df in comb:
+        print(f'{col} column missing values (%): {df[col].isnull().sum()}')
+
+for df in [df_train, df_test]:
     print(f'{df.name}')
     display_missing(df)
 
 #Extract Cabin Numbers
 df_train['Deck'] = df_train['Cabin'].apply(lambda s: s[0] if pd.notnull(s) else 'M')
+
+##Add percentage bar number 1
+
+#
+idx = df_train[df_train['Deck'] == 'T'].index
+df_train.loc[idx, 'Deck'] = 'A'
+
+##Add percentage bar number 2
+
+##Family size
+
 #Deck and Embarked combined could be a good predictor
 df_train[['Deck','Embarked','Sex','Survived']].groupby(['Sex','Deck','Embarked']).mean()
 
@@ -93,58 +107,52 @@ def getTicketStrNum(df, col):
     temp[col_alp].fillna('M', inplace=True)
     return temp
 df_train = getTicketStrNum(df_train, 'Ticket')
+df_train['Ticket_num'] = pd.to_numeric(df_train['Ticket_num'])
 
 #survival rate varies across ticket number prefix
 gtb1 = df_train[['Survived','Ticket_alp']].groupby(['Ticket_alp'])
 gtb1['Survived'].sum()/gtb1['Survived'].count()
 
 #Ticket Number Distribution by Pclass and Embarked
+#The plot doesn't help to impute the two missing Embarked value, both of which are in Pclass = 1.
+#The only information gain is that given they share the same ticket number, they should know each
+#other and highly likely embark from either C or S together.
 g = sns.FacetGrid(df_train, col='Pclass', row='Embarked')
 g = g.map(sns.countplot, 'Ticket_num')
 plt.show()
 
 ##
+g = sns.FacetGrid(df_train, col='Pclass', row='Embarked', hue='Deck')
+g = g.map(plt.scatter, 'Age', 'Fare')
+g.add_legend()
+plt.show()
+
 #Only two missing Embarked values. Both are female from class 1 and share the same ticket number.
-print(df_train.loc[df_train['Embarked'].isnull(),])
-
-## qcut or check the price value to see whether the same pricing only occurs in a certain port.
-
+#Sort by age
+print(df_train.loc[df_train['Embarked'].isnull(),].sort_values(by=['Age'], ascending=False))
 
 ##
-g = sns.FacetGrid(df_train, col='Deck', row='Pclass')
-g = g.map(sns.barplot, y='Survived', x='Embarked')
-plt.show()
-##Fare Distribution
-g = sns.FacetGrid(df_train, row='Pclass', col='Embarked')
-g = g.map(plt.hist, 'Fare')
-plt.show()
+#They more likely board on the ship at port S -- Theory 1.
+df_train.loc[df_train['Ticket_num'].between(100000,125000)]['Embarked'].value_counts() # S
+df_train.loc[df_train['Fare'].between(60,100)]['Embarked'].value_counts() # S
+df_train['Embarked'] = df_train['Embarked'].fillna('S')
+
+#Impute missing age by sex and class group
+df_train['Age'] = df_train.groupby(['Sex','Pclass'])['Age'].apply(lambda x: x.fillna(x.median()))
+
+#Distribute of minor; the group with higher young people has higher mortality rate
+cols = ['Deck','Pclass']
+df_train.groupby(cols).filter(lambda x: x['Age'].quantile(q=0.75) > 50)['Survived'].mean()
+df_train.groupby(cols).filter(lambda x: x['Age'].quantile(q=0.75) < 30)['Survived'].mean()
 
 
-## Age
-# 
-ss_age = pd.qcut(df_train['Age'], 10)
-ss_survived = df_train['Survived']
-df_qAgeSruvived = pd.concat([ss_age, ss_survived], axis=1)
-sns.countplot(x='Age', hue='Survived', data=df_qAgeSruvived)
-#
-plt.xlabel('Age', size=15, labelpad=20)
-plt.ylabel('Passenger Count', size=15, labelpad=20)
-plt.tick_params(axis='x', labelsize=10)
-plt.tick_params(axis='y', labelsize=10)
-plt.legend(['Not Survived', 'Survived'], loc='upper right', prop={'size': 15})
-plt.title('Survival Counts by {}'.format('Age'), size=15, y=1.05)
-plt.show(block=True)
+##Plot training set survival distribution
+#https://i.postimg.cc/25rVKwxB/1590377048.png
+#https://python-graph-gallery.com/13-percent-stacked-barplot/
 
-## # Age plot
-h = sns.FacetGrid(df_train, row = 'Sex', col = 'Pclass', hue = 'Survived')
-h.map(plt.hist, 'Age', alpha = .75)
-h.add_legend()
-plt.show(block=True)
+##Categorical variable plot
 
+##Continuous variable plot
 
-
-
-
-
-
+##Fare binning with qcut or cut
 
