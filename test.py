@@ -98,11 +98,11 @@ temp = (gtb1['Survived'].sum()/gtb1['Survived'].count() * 100).sort_values()
 temp.name = 'PrefixSurvival'
 df_all = pd.merge(df_all, temp, on = 'Ticket_alp')
 
-##The size of each travelling team
+#The size of each traveling group
 grouped = df_all.groupby(['Ticket_num'])
 big_team_list = []
 for i, g in grouped.groups.items():
-    big_team_list.append((i,len(g)))
+    big_team_list.append((i,len(g))) # evaluate each group size
 temp = pd.DataFrame(np.array(big_team_list), columns=['Ticket_num','TeamSize']).sort_values(by='TeamSize')
 df_all = pd.merge(df_all, temp, on = 'Ticket_num')
 
@@ -111,7 +111,9 @@ print(df_all.groupby(['TeamSize'])['Survived'].mean())
 print(df_all.groupby(['Pclass','TeamSize'])['Survived'].mean())
 print(df_all.groupby(['Pclass','TeamSize'])['Survived'].mean().reset_index().sort_values(by='Survived'))
 
-##
+#The size of family
+df_all['FamilySize'] = df_all['SibSp'] + df_all['Parch'] + 1
+
 #todo: who is a child?
 def getRole(df, cutoff=7):
     df['Role'] = 'Man'
@@ -133,22 +135,53 @@ tb2 = pd.melt(tb1, id_vars=['Age'], value_vars=['Child', 'Man', 'Woman'], var_na
 #seaborn FacetGrid: [link](https://seaborn.pydata.org/generated/seaborn.FacetGrid.html)
 g = sns.FacetGrid(tb2, col='Role', margin_titles=True)
 g = g.map(plt.plot, 'Age', 'Survival')
+
 #add vertical line
 axes = g.fig.axes
 for ax in axes:
     ax.vlines(x=15, ymax=1, ymin=0, linestyles='dashed', alpha=0.3, colors='blue')
 plt.show()
 
-#I will temporarily set cutoffChildAge = 6 (70% survival rates) to approximate the survival rate of women
+#I will temporarily set cutoffChildAge = 15 (60% survival rates) to approximate the survival rate of women
 getRole(df_all, cutoff=15)
 
-#ok.above
-#todo: does the children travel with adults? are they more likely to survive?
+#Distribution of teamsize
+df_all.groupby(['Ticket_num','Ticket_alp']).first()['TeamSize'].value_counts()
 
+##Identify siblings
+#todo: are siblings values unique within each group?
+#step 1. create a new column for children SibSp value only.
+df_all['childSibSp'] = np.where(df_all['Role'] == 'Child', df_all['SibSp'], np.nan)
+#step 2. is the childSibSp value unique within each travel group? Yes.
+df_all.groupby('Ticket_num')['childSibSp'].nunique().value_counts()
+#It means we can use childSibSp to identify siblings that is not covered by the 'Child'
+#definition.
+
+#todo: OK. above. 2020-5-28
+
+
+##
+#Just check out a few of groups of size 2
+df_all.loc[df_all['TeamSize']==6,:]['Ticket_num'].unique()
+df_all.loc[df_all['Ticket_num']==236853,:] # size of 2
+df_all.loc[df_all['Ticket_num']==382652,:] # size of 6 (all the child die)
+
+##
+#todo: get the other child within the same group
+#the younger the higher the survival rate I guess
+df_all.groupby('Ticket_num')
+
+
+
+df_all.loc[df_all['Ticket_num']==33112,:]
 ##
 #How many children in this group?
 #Don't put ['Role'] inside the transform's lambda function
 df_all['NumChild'] = df_all.groupby('Ticket_num')['Role'].transform(lambda x: (x=='Child').sum())
+
+
+##
+#todo: does the children travel with adults? are they more likely to survive?
 
 #although the survival rate by number of child varies, the highest survival rate
 #falls in family of three children and it holds across classes.
@@ -222,8 +255,6 @@ df_all.groupby('Ticket_num')['Ticket'].apply(lambda x: (x=='Mrs').sum()).reset_i
 
 
 
-##OK.Above
-
 #todo: with an adult in the group
 
 #todo: check p.104 for missing categorical data
@@ -239,8 +270,8 @@ df_all.sample(10)
 
 #Who is the parent
 
-# -------------------------------------------------------------------------
-##
+#-------------------------------------------------------------------------
+#Example of displaying group results
 import random
 gs = df_all.groupby('Ticket_num')
 type(gs.indices) # dict
@@ -262,17 +293,16 @@ for i, g in gs.groups.items():
         print(gs.get_group(i))
         break
 
+#-------------------------------------------------------------------------
 #We found: the survival rate of the travelling group is a useful indicator
 #It appears none of them are relatives except Lam Ali and Lam Len.
 df_all.loc[df_all['Ticket_num']==1601,:]
-
-
 
 ##Survival rate computation
 # The Davies has two children and two adults (one is maid). The youngest child is alive.
 df_all.loc[df_all['Ticket_num']==33112,:]
 
-
+#-------------------------------------------------------------------------
 ##Identify travelling groups with children among which who are parents?
 #Trick#
 def addMaxParchMinSibSp(grp):
@@ -293,7 +323,6 @@ df_all['isParent'] = np.where((df_all['Parch']==df_all['maxParch']) & (df_all['S
 df_all.loc[df_all['Ticket_num']==36928,:]
 df_all['Ticket_num'].value_counts().sample(10)
 
-# The above works. ---------
 
 ##
 #todo: who is the parents
@@ -341,8 +370,6 @@ df_all['GroupWMomChild'] = temp1 & temp2
 #Male Survival rate is higher for travelling group with mother and children
 df_all.groupby(['GroupWMomChild','Pclass','Sex'])['Survived'].mean()
 
-
-
 ##
 #Why the difference? Average age of family without children are older?
 df_all.groupby(['GroupWMomChild','Pclass','Sex'])['Age'].mean()
@@ -367,7 +394,6 @@ slice = df_all['GroupWMomChild']==False & df_all['Pclass']==1
 ##
 #Sanity check: is there any group having more than one moether?
 df_all.groupby(['Ticket_num'])['MotherWithMaster'].count().sort_values()
-
 
 
 ## Family group
@@ -429,9 +455,6 @@ tb2.rename(columns={'Survived':'Passengers (%)'})
 alive_deck_embarked = df_train[['Deck', 'Embarked', 'Survived']].groupby(['Deck','Embarked'])
 tb3 = alive_deck_embarked['Survived'].sum()/alive_deck_embarked['Survived'].count()
 tb3.sort_values(ascending=False)
-
-
-
 
 ##
 g = sns.FacetGrid(df_train, col='Pclass', row='Embarked', hue='Deck')
