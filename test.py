@@ -66,14 +66,8 @@ for df in [df_train, df_test]:
     print(f'{df.name}')
     displayMissing(df)
 
-def getCabinPrefix(df):
-    # 'M' is assigned to missing values
-    df['Deck'] = df['Cabin'].apply(lambda s: s[0] if pd.notnull(s) else 'M')
-    return df
-
-getCabinPrefix(df_all)
-df_all['Deck'].unique()
-
+#Ticket combination is the feature without any missing values.
+#We should try to extract any information from it although it appears useless at the first glance.
 def getTicketPrefixAndNumber(df, col):
     # naming the columns to be created
     col_num = col + '_num'
@@ -91,7 +85,8 @@ def getTicketPrefixAndNumber(df, col):
 getTicketPrefixAndNumber(df_all, 'Ticket')
 df_all['Ticket_num'] = pd.to_numeric(df_all['Ticket_num'])
 
-##
+#todo: Ticket number should be treated as a nominal variable, instead of a continuous variable
+
 #check to see if the extraction works as expected
 colnames = ['Ticket' + s for s in ['','_num','_alp']]
 df_all[colnames]
@@ -99,7 +94,79 @@ df_all[colnames]
 #survival rate varies across ticket number prefix; it can be a predictor
 #Does ticket prefix associate with family name?
 gtb1 = df_all.iloc[:df_train.shape[0]][['Survived','Ticket_alp']].groupby(['Ticket_alp'])
-gtb1['Survived'].sum()/gtb1['Survived'].count()
+temp = (gtb1['Survived'].sum()/gtb1['Survived'].count() * 100).sort_values()
+temp.name = 'PrefixSurvival'
+df_all = pd.merge(df_all, temp, on = 'Ticket_alp')
+
+##The size of each travelling team
+grouped = df_all.groupby(['Ticket_num'])
+big_team_list = []
+for i, g in grouped.groups.items():
+    big_team_list.append((i,len(g)))
+temp = pd.DataFrame(np.array(big_team_list), columns=['Ticket_num','TeamSize']).sort_values(by='TeamSize')
+df_all = pd.merge(df_all, temp, on = 'Ticket_num')
+
+#So it appears team size is a useful predictor too.
+print(df_all.groupby(['TeamSize'])['Survived'].mean())
+print(df_all.groupby(['Pclass','TeamSize'])['Survived'].mean())
+print(df_all.groupby(['Pclass','TeamSize'])['Survived'].mean().reset_index().sort_values(by='Survived'))
+
+##
+#todo: who is a child?
+def getRole(df, cutoff=7):
+    df['Role'] = 'Man'
+    df.loc[df['Sex'] == 'female', 'Role'] = 'Woman'
+    df.loc[df['Age'] <= cutoff, 'Role'] = 'Child'
+    return df
+ans = []
+ages = range(1, 30)
+for cut in ages:
+    getRole(df_all, cutoff=cut)
+    g = df_all.groupby(['Role'])
+    ans.append((g['Survived'].sum() / g['Survived'].count()).to_frame())
+temp = pd.concat(ans, axis=1) # 3 by N (=len(ages))
+tb1 = pd.DataFrame(np.array(temp).T, columns=['Child', 'Man', 'Woman'], index=ages) # N by 3
+tb1.index.name = 'Age'
+tb1.reset_index(inplace=True) # prep for melt
+tb2 = pd.melt(tb1, id_vars=['Age'], value_vars=['Child', 'Man', 'Woman'], var_name='Role', value_name='Survival')
+
+#seaborn FacetGrid: [link](https://seaborn.pydata.org/generated/seaborn.FacetGrid.html)
+g = sns.FacetGrid(tb2, col='Role', margin_titles=True)
+g = g.map(plt.plot, 'Age', 'Survival')
+#add vertical line
+axes = g.fig.axes
+for ax in axes:
+    ax.vlines(x=15, ymax=1, ymin=0, linestyles='dashed', alpha=0.3, colors='blue')
+plt.show()
+
+#I will temporarily set cutoffChildAge = 6 (70% survival rates) to approximate the survival rate of women
+getRole(df_all, cutoff=15)
+
+#ok.above
+#todo: does the children travel with adults? are they more likely to survive?
+
+##
+#How many children in this group?
+#Don't put ['Role'] inside the transform's lambda function
+df_all['NumChild'] = df_all.groupby('Ticket_num')['Role'].transform(lambda x: (x=='Child').sum())
+
+#although the survival rate by number of child varies, the highest survival rate
+#falls in family of three children and it holds across classes.
+print(df_all.groupby(['Pclass','NumChild'])['Survived'].mean())
+
+
+#todo: is family size more informative than team size? check to see if servants are
+#more likely to die.
+
+
+##
+def getCabinPrefix(df):
+    # 'M' is assigned to missing values
+    df['Deck'] = df['Cabin'].apply(lambda s: s[0] if pd.notnull(s) else 'M')
+    return df
+
+getCabinPrefix(df_all)
+df_all['Deck'].unique()
 
 #Check to see if the 2nd half of the combined table are all NaN Survived data
 #(1) iloc works with slicing that includes right endpoint.
@@ -120,6 +187,8 @@ df_all.loc[df_all['Ticket_alp']=='PC']['Survived'].sum()
 #We may also check to see if couples have higher survival rates
 #Check Family Ryerson. The number of SibSp and Parch might have more information.
 
+
+##
 #Extract names and titles
 def getLastNameAndTitle(df):
     # (1) https://docs.python.org/2/library/re.html
@@ -135,7 +204,6 @@ cols = ['Name','Title','LastName']
 #colon cannot be ignored in df_all.loc[:,cols]
 df_all.loc[:,cols]
 
-##
 #People with the same surname may come from different families, for example,
 #check the group of surname 'Davies' we found Ticket #48871 corresponds
 #to three young men; ticket #33112 corresponds to one women of age 48 and
@@ -152,36 +220,13 @@ df_all.loc[df_all['LastName']=='Davies',:].sort_values(by=['Ticket_num'])
 #The answer is no.
 df_all.groupby('Ticket_num')['Ticket'].apply(lambda x: (x=='Mrs').sum()).reset_index(name='bool')
 
-##
-#todo: Number of children in the traveling group
 
-def getRole(df, cutoff=7):
-    df['Role'] = 'Man'
-    df.loc[df['Sex']=='female', 'Role'] = 'Woman'
-    df.loc[df['Age']<=cut, 'Role'] = 'Child'
-    return df
-ans = []
-ages = range(1, 30)
-for cut in ages:
-    getRole(df_all, cutoff=cut)
-    g = df_all.groupby(['Role'])
-    ans.append((g['Survived'].sum() / g['Survived'].count()).to_frame())
-temp = pd.concat(ans, axis=1)
-temp.columns = ages
-temp.T
-
-#I will temporarily set cutoffChildAge = 6 (70% survival rates) to approximate the survival rate of women
-getRole(df_all, cutoff=7)
-
-#How many children in this group?
-#Don't put ['Role'] inside the transform's lambda function
-df_all['NumChild'] = df_all.groupby('Ticket_num')['Role'].transform(lambda x: (x=='Child').sum())
-
-#although the survival rate by number of child varies, the highest survival rate
-#falls in family of three children and it holds across classes.
-df_all.groupby(['Pclass','NumChild'])['Survived'].mean()
 
 ##OK.Above
+
+#todo: with an adult in the group
+
+#todo: check p.104 for missing categorical data
 
 numChildDict = df_all.groupby('Ticket_num')['Age'].apply(lambda x: (x <= cutoffChildAge).sum()).reset_index(name='NumChild')
 df_all.join(numChildDict, on = 'Ticket_num')
@@ -226,7 +271,6 @@ df_all.loc[df_all['Ticket_num']==1601,:]
 ##Survival rate computation
 # The Davies has two children and two adults (one is maid). The youngest child is alive.
 df_all.loc[df_all['Ticket_num']==33112,:]
-
 
 
 ##Identify travelling groups with children among which who are parents?
