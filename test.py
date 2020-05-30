@@ -229,21 +229,7 @@ df_all.loc[index,:].groupby('Ticket_num').groups.keys()
 df_all.loc[df_all['Ticket_num']==2079,:]
 """
 
-##Survival rate computation
-# The Davies has two children and two adults (one is maid). The youngest child is alive.
-df_all.loc[df_all['Ticket_num'] == 33112, :]
-df_all.loc[df_all['Ticket_num'] == 2079, :]
-df_all.loc[df_all['Ticket_num'] == 36928, :]  # old family
-# Just check out a few of groups of size 2
-# df_all.loc[df_all['TeamSize']==7,:]['Ticket_num'].unique()
-df_all.loc[df_all['Ticket_num'] == 236853, :]  # size of 2
-df_all.loc[df_all['Ticket_num'] == 17608, :]  # size of 6 (all the child die)
-df_all.loc[df_all['Ticket_num'] == 3101295, :]
-df_all.loc[df_all['Ticket_num'] == 2144, :]
-df_all.loc[df_all['Ticket_num'] == 347742, :]
-df_all.loc[df_all['Ticket_num'] == 347077, :]  # team with a mother that survived
-# It appears none of them are relatives except Lam Ali and Lam Len.
-df_all.loc[df_all['Ticket_num'] == 1601, :]
+
 
 # See this link: https://medium.com/@ODSC/creating-if-elseif-else-variables-in-python-pandas-7900f512f0e4
 """ Each method in this block works!!
@@ -272,7 +258,7 @@ df_all['test3'] = df_all['isMotherSurvived'].where(df_all['Role'].eq('Mother'))\
     .groupby(df_all['Ticket_num']).transform('first').fillna('not applicable')
 """
 
-##
+
 # So, we can do it automatically based on the experimental code block above.
 role = 'Mother'
 def isSurvived(df_all, role='Mother'):
@@ -294,7 +280,7 @@ roles = ['Mother', 'Father']
 for role in roles:
     isSurvived(df_all, role=role)
 
-##
+
 def getCabinPrefix(df):
     # 'M' is assigned to missing values
     df['Deck'] = df['Cabin'].apply(lambda s: s[0] if pd.notnull(s) else 'M')
@@ -328,7 +314,7 @@ df_all.loc[df_all['Ticket_alp'] == 'PC']['Survived'].sum()
 # Check Family Ryerson. The number of SibSp and Parch might have more information.
 """
 
-##
+
 # Extract names and titles
 def getLastNameAndTitle(df):
     # (1) https://docs.python.org/2/library/re.html
@@ -361,20 +347,18 @@ df_all.loc[df_all['LastName'] == 'Davies', :].sort_values(by=['Ticket_num'])
 # Is it possible to have two Mrs in a travelling group? N
 # Trick#1: conditinal count after groupby
 # The answer is no.
-df_all.groupby('Ticket_num')['Ticket'].apply(lambda x: (x == 'Mrs').sum()).reset_index(name='bool')
-
-# -------------------------------------------------------------------------
-# Example of displaying group results
-import random
-
-gs = df_all.groupby('Ticket_num')
-type(gs.indices)  # dict
+df_all.groupby('Ticket_num')['Ticket'].apply(lambda x: (x == 'Mrs').sum()).reset_index(name='MrsCount')
 
 """
+# Example of displaying group results
+gs = df_all.groupby('Ticket_num')
+print(gs.indices)  # dict
+
 # Method 1. Peek the grouped data by sampling; so only part of the data
 # grouped.groups.keys()
 # grouped.groups.items()
 # grouped.get_group(gpkey)
+import random
 sampled_group_key = random.sample(gs.groups.keys(), 100)
 group_list = list(map(lambda gpkey: gs.get_group(gpkey), sampled_group_key))
 for i, g in enumerate(group_list):
@@ -404,7 +388,7 @@ def addMaxParchMinSibSp(grp):
 df_all = df_all.join(df_all.groupby('Ticket_num').apply(addMaxParchMinSibSp), on='Ticket_num')
 """
 
-##
+
 # todo: who is the parents
 # todo: sibliing in the same family use their sibling's age to impute missing value
 
@@ -443,14 +427,85 @@ df_all['GroupWMomChild'] = temp1 & temp2
 # df_all.merge((temp3 & temp4).reset_index(), how='left').rename(columns={0: 'GroupWMomChild_2'})
 """
 
-#OK.above.
+#Embarged (Categorical Variables) Imputation
+# IMPUTATION: EMBARKED
+# They more likely board on the ship at port S -- Theory 1.
+df_all.loc[df_all['Embarked'].isnull(),:]
+print(df_all.loc[df_all['Ticket_num'].between(100000, 125000)]['Embarked'].value_counts())  # S
+print(df_all.loc[df_all['Fare'].between(60, 100)]['Embarked'].value_counts())  # S
+# It's hard to tell which port they boarded from only based on their `Pclass` and `Fare` features.
+df_all.groupby(['Pclass',pd.cut(df_all['Fare'],range(50,100,15))])['Embarked'].apply(lambda x: x.value_counts().nlargest(3))
+# So I make use of the information contained in the ticket combination
+# Here is what I did.
+# data index corresponding to valid 'Embarked' data
+index = df_all['Embarked'].isnull()
+# we only use three features to predict missing value
+_dfAll = df_all.loc[:, ['Embarked', 'Pclass', 'Ticket_alp', 'Ticket_num']].copy()
 
-# Male Survival rate is higher for travelling group with mother and children
-df_all.groupby(['GroupWMomChild', 'Pclass', 'Sex'])['Survived'].mean()
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+encoder = LabelEncoder()
+minmax_scale = MinMaxScaler(feature_range=(0,1))
+# Encode columns 'Pclass' and 'Ticket_alp'
+# https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.LabelEncoder.html
+# Note below that `fit_transform()` expects a 2D array, but encoder returns a 1D array
+# So we need to reshape it.
+for i in range(1,3):
+    temp = encoder.fit_transform(_dfAll.iloc[:,i]).reshape(-1,1)
+    _dfAll.iloc[:, i] = minmax_scale.fit_transform(temp)
+# Our feature matrix consists of `Pclass`, `Ticket_alp`, and `Ticket_num`.
+_xtrain = _dfAll.loc[~index,_dfAll.columns[1:4]]
+# Standardizing
+_ytrain = encoder.fit_transform(_dfAll.loc[~index, 'Embarked'])
+
+from sklearn.neighbors import KNeighborsClassifier
+#https://scikit-learn.org/stable/modules/generated/sklearn.neighbors.KNeighborsClassifier.html
+knc = KNeighborsClassifier(3, weights='distance')
+trained_knc = knc.fit(_xtrain, _ytrain)
+predicted_embarked_missing = trained_knc.predict(_dfAll.loc[index, _dfAll.columns[1:4]])
+df_all.loc[index,'Embarked'] = encoder.inverse_transform(predicted_embarked_missing) # S
+
+##Survival rate computation
+# The Davies has two children and two adults (one is maid). The youngest child is alive.
+df_all.loc[df_all['Ticket_num'] == 33112, :]
+df_all.loc[df_all['Ticket_num'] == 2079, :]
+df_all.loc[df_all['Ticket_num'] == 36928, :]  # old family
+# Just check out a few of groups of size 2
+# df_all.loc[df_all['TeamSize']==7,:]['Ticket_num'].unique()
+df_all.loc[df_all['Ticket_num'] == 236853, :]  # size of 2
+df_all.loc[df_all['Ticket_num'] == 17608, :]  # size of 6 (all the child die)
+df_all.loc[df_all['Ticket_num'] == 3101295, :]
+df_all.loc[df_all['Ticket_num'] == 2144, :]
+df_all.loc[df_all['Ticket_num'] == 347742, :]
+df_all.loc[df_all['Ticket_num'] == 347077, :]  # team with a mother that survived
+# It appears none of them are relatives except Lam Ali and Lam Len.
+df_all.loc[df_all['Ticket_num'] == 1601, :]
 
 ##
-# Why the difference? Average age of family without children are older?
-df_all.groupby(['GroupWMomChild', 'Pclass', 'Sex'])['Age'].mean()
+
+
+
+
+# tY_train = df_all.loc[~index, ['Embarked']]
+# tX_pred = df_all.loc[index, ['Pclass', 'Ticket_alp', 'Ticket_num']]
+# from sklearn.neighbors import KNeighborsClassifier
+# knn = KNeighborsClassifier(n_neighbors=2, p=2, metric='minkowski')
+# knn.fit(tX_train, tY_train)
+
+
+
+
+
+
+##Fare () Imputation
+df_all.loc[df_all['Fare'].isnull(),:]
+gps1 = ['Pclass', 'Embarked', 'TeamSize']
+gps2 = ['Pclass', 'Embarked', 'TeamSize', 'Ticket_alp']
+df_all['test'] = df_all.groupby(gps1)['Fare']\
+    .transform(lambda x: x.fillna(x.median()))
+
+##todo: Survival Rate considering missing values
+
+##
 
 g = sns.FacetGrid(df_all, col='Pclass', row='Sex')
 g = g.map(sns.countplot, 'Age')
@@ -526,11 +581,7 @@ plt.show()
 print(df_train.loc[df_train['Embarked'].isnull(),].sort_values(by=['Age'], ascending=False))
 
 ##
-# IMPUTATION: EMBARKED
-# They more likely board on the ship at port S -- Theory 1.
-df_train.loc[df_train['Ticket_num'].between(100000, 125000)]['Embarked'].value_counts()  # S
-df_train.loc[df_train['Fare'].between(60, 100)]['Embarked'].value_counts()  # S
-df_train['Embarked'] = df_train['Embarked'].fillna('S')
+
 
 # IMPUTATION: AGE
 # Impute missing age by sex and class group
