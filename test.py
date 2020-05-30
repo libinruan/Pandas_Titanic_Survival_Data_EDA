@@ -58,11 +58,9 @@ print(df_train.describe(include=['O']).T)
 # Stat about missing values
 print('-' * 30)
 
-
 def displayMissing(df):
     for col in df.columns.tolist():
         print(f'{col} column missing values: {df[col].isnull().sum()}')
-
 
 for df in [df_train, df_test]:
     print(f'{df.name}')
@@ -89,31 +87,50 @@ def getTicketPrefixAndNumber(df, col):
 getTicketPrefixAndNumber(df_all, 'Ticket')
 df_all['Ticket_num'] = pd.to_numeric(df_all['Ticket_num'])
 
-# todo: Ticket number should be treated as a nominal variable, instead of a continuous variable
+#Are there any people sharing the same ticket number but come from different team? Yes.
+#So, throughout the EDA, we should use 'Ticket', instead of 'Ticket_num' only, as the groupby key
+islice = df_all.groupby('Ticket_num')['Ticket_alp'].transform(lambda x: x.nunique() > 1)
+df_all.loc[islice,:]
+
+#todo: after extracting information, we discard the ticket_num, ticket_alp columns, right?
 
 # check to see if the extraction works as expected
 colnames = ['Ticket' + s for s in ['', '_num', '_alp']]
 df_all[colnames]
 
-# survival rate varies across ticket number prefix; it can be a predictor
-# Does ticket prefix associate with family name?
-gtb1 = df_all.iloc[:df_train.shape[0]][['Survived', 'Ticket_alp']].groupby(['Ticket_alp'])
+# survival rate varies across ticket number prefix; it can be a predictor, right?
+gtb1 = df_all[['Survived', 'Ticket']].groupby(['Ticket'])
 temp = (gtb1['Survived'].sum() / gtb1['Survived'].count() * 100).sort_values()
-temp.name = 'PrefixSurvival'
-df_all = pd.merge(df_all, temp, on='Ticket_alp')
+temp.name = 'TeamSurvivalRate'
+df_all = pd.merge(df_all, temp, on='Ticket')
 
-# todo: The size of each traveling group
-grouped = df_all.groupby(['Ticket_num'])
-big_team_list = []
-for i, g in grouped.groups.items():
-    big_team_list.append((i, len(g)))  # evaluate each group size
-temp = pd.DataFrame(np.array(big_team_list), columns=['Ticket_num', 'TeamSize']).sort_values(by='TeamSize')
-df_all = pd.merge(df_all, temp, on='Ticket_num')
+#Check one of the family of size larger than 5
+df_all.loc[df_all.groupby('Ticket')['Age'].transform('count') > 5, :]['Ticket'].unique()
 
+#Get the group size, the number of non-NA examples
+
+#Application of Method 1.
+#Proportion of team member with survival rate available
+def getCredibilitySurvivalRate(df):
+    # To get the length of the column, don't use `count()`
+    df['SRcredibility'] = pd.notnull(df['Survived']).sum() / df['Age'].shape[0]
+    return df
+df_all = df_all.groupby('Ticket').apply(getCredibilitySurvivalRate)
+df_all.loc[df_all['Ticket'] == 'PC 17608',:]
+
+df_all['TeamSize'] = df_all.groupby('Ticket')['Age'].transform(lambda x: x.shape[0])
+
+"""
 # So it appears team size is a useful predictor too.
-print(df_all.groupby(['TeamSize'])['Survived'].mean())
+print(df_all.groupby(['TeamSize','Ticket'])['TeamSurvivalRate'].apply(lambda x: x.mean()).groupby(level=0).mean())
 print(df_all.groupby(['Pclass', 'TeamSize'])['Survived'].mean())
 print(df_all.groupby(['Pclass', 'TeamSize'])['Survived'].mean().reset_index().sort_values(by='Survived'))
+
+islice = (df_all['Pclass'] == 3)  & (df_all['TeamSize'] == 11)
+df_all.loc[islice,:]
+"""
+
+##
 
 # The correct size of family
 df_all['FamilySize'] = df_all['SibSp'] + df_all['Parch'] + 1
@@ -152,7 +169,7 @@ plt.show()
 getRole(df_all, cutoff=15)
 
 # Distribution of teamsize
-df_all.groupby(['Ticket_num', 'Ticket_alp']).first()['TeamSize'].value_counts()
+df_all.groupby(['Ticket']).first()['TeamSize'].value_counts()
 
 # Identify siblings
 # todo: are siblings values unique within each group?
@@ -393,7 +410,8 @@ df_all = df_all.join(df_all.groupby('Ticket_num').apply(addMaxParchMinSibSp), on
 # todo: sibliing in the same family use their sibling's age to impute missing value
 
 # we assume the most frequent LastName shown in a travel group is the family name.
-df_all['Family'] = df_all.groupby(['Ticket_num'])['LastName'].transform(lambda x: x.value_counts().index[0])
+# Disable the line below. `Family` is no longer useful once we make use of ticket combination.
+#df_all['Family'] = df_all.groupby(['Ticket_num'])['LastName'].transform(lambda x: x.value_counts().index[0])
 
 """
 # identify who's with a baby and who's a baby COLMN OPERATIONS.
@@ -465,63 +483,43 @@ predicted_embarked_missing = trained_knc.predict(_dfAll.loc[index, _dfAll.column
 df_all.loc[index,'Embarked'] = encoder.inverse_transform(predicted_embarked_missing) # S
 
 ##Survival rate computation
+cols = df_all.columns
 # The Davies has two children and two adults (one is maid). The youngest child is alive.
-df_all.loc[df_all['Ticket_num'] == 33112, :]
-df_all.loc[df_all['Ticket_num'] == 2079, :]
-df_all.loc[df_all['Ticket_num'] == 36928, :]  # old family
+df_all.loc[df_all['Ticket_num'] == 33112, cols]
+df_all.loc[df_all['Ticket_num'] == 2079, cols]
+df_all.loc[df_all['Ticket_num'] == 36928, cols]  # old family
 # Just check out a few of groups of size 2
 # df_all.loc[df_all['TeamSize']==7,:]['Ticket_num'].unique()
-df_all.loc[df_all['Ticket_num'] == 236853, :]  # size of 2
-df_all.loc[df_all['Ticket_num'] == 17608, :]  # size of 6 (all the child die)
-df_all.loc[df_all['Ticket_num'] == 3101295, :]
-df_all.loc[df_all['Ticket_num'] == 2144, :]
-df_all.loc[df_all['Ticket_num'] == 347742, :]
-df_all.loc[df_all['Ticket_num'] == 347077, :]  # team with a mother that survived
+df_all.loc[df_all['Ticket_num'] == 236853, cols]  # size of 2
+df_all.loc[df_all['Ticket_num'] == 17608, cols]  # size of 6 (all the child die)
+df_all.loc[df_all['Ticket_num'] == 3101295, cols]
+df_all.loc[df_all['Ticket_num'] == 2144, cols]
+df_all.loc[df_all['Ticket_num'] == 347742, cols]
+df_all.loc[df_all['Ticket_num'] == 347077, cols]  # team with a mother that survived
 # It appears none of them are relatives except Lam Ali and Lam Len.
-df_all.loc[df_all['Ticket_num'] == 1601, :]
-
-##
+df_all.loc[df_all['Ticket_num'] == 1601, cols]
 
 
-
-
-# tY_train = df_all.loc[~index, ['Embarked']]
-# tX_pred = df_all.loc[index, ['Pclass', 'Ticket_alp', 'Ticket_num']]
-# from sklearn.neighbors import KNeighborsClassifier
-# knn = KNeighborsClassifier(n_neighbors=2, p=2, metric='minkowski')
-# knn.fit(tX_train, tY_train)
-
-
-
-
-
-
-##Fare () Imputation
-df_all.loc[df_all['Fare'].isnull(),:]
-gps1 = ['Pclass', 'Embarked', 'TeamSize']
-gps2 = ['Pclass', 'Embarked', 'TeamSize', 'Ticket_alp']
-df_all['test'] = df_all.groupby(gps1)['Fare']\
+#Fare () Imputation
+#print(df_all.loc[df_all['Fare'].isnull(),:]) # index = 973
+islice = (df_all['Pclass'] == 3) & (df_all['TeamSize'] == 1)
+sns.scatterplot(x='Age', y='Fare', data=df_all.loc[islice,:]); plt.show()
+# impute
+df_all['Fare'] = df_all.groupby(['Pclass','TeamSize'])['Fare']\
     .transform(lambda x: x.fillna(x.median()))
+#print(df_all.iloc[973,:])
 
 ##todo: Survival Rate considering missing values
-
-##
-
-g = sns.FacetGrid(df_all, col='Pclass', row='Sex')
-g = g.map(sns.countplot, 'Age')
-plt.show()
-# g.set(xticks=[range(10,70,10)])
-# [plt.setp(ax.get_xticklabels(), rotation=90) for ax in g.axes.flat]
-##plt.show()
+#anyone survived, how much percetange does the team member survive?
+df_all.groupby('Ticket_num')
 
 
 ##
-# Sanity check: is there any group having more than one moether?
-df_all.groupby(['Ticket_num'])['MotherWithMaster'].count().sort_values()
+
 
 # Ticekt_num is more useful than LastName (aka Family)
-# todo: check p.104 for missing categorical data (KNN)
-# ToDo: Sensitivity Analysis can have lots of information!!
+
+# ToDo: Error Analysis can have lots of information!!
 # ToDo: check to see missing Cabin value (before imputed) leads to higher morality rate? Ticket#347088
 # ToDo: does our group have master? does our group have servant?
 # ToDo: check the survival rate of master. See ticket#347077, not every master is alive.
@@ -545,17 +543,21 @@ g = sns.FacetGrid(df_train, col='Pclass', row='Embarked')
 g = g.map(sns.countplot, 'Ticket_num')
 plt.show()
 
-# #Add percentage bar number 1
+##
+g = sns.FacetGrid(df_all, col='Pclass', row='Sex')
+g = g.map(sns.countplot, 'Age')
+g.set(xticks=[range(10,70,10)])
+[plt.setp(ax.get_xticklabels(), rotation=90) for ax in g.axes.flat]
+plt.show()
 
-#
-idx = df_train[df_train['Deck'] == 'T'].index
-df_train.loc[idx, 'Deck'] = 'A'
+# #Add percentage bar number 1
 
 # #Add percentage bar number 2
 
 # Deck and Embarked combined could be a good predictor
 df_train[['Deck', 'Embarked', 'Sex', 'Survived']].groupby(['Sex', 'Deck', 'Embarked']).mean()
 
+##
 # Percentage of passenger by Embarked Ports but shown in order of Deck and Embarked
 deck_embarked = df_train[['Deck', 'Embarked', 'Survived']].groupby(['Deck', 'Embarked']).count()
 # solution 1
@@ -565,6 +567,7 @@ tb1.rename(columns={'Survived': 'Passengers (%)'})
 tb2 = 100 * deck_embarked / deck_embarked.groupby(level=1).transform('sum')
 tb2.rename(columns={'Survived': 'Passengers (%)'})
 
+##
 # Survival rate by Embarked Port but shown in order of Deck and Embarked
 alive_deck_embarked = df_train[['Deck', 'Embarked', 'Survived']].groupby(['Deck', 'Embarked'])
 tb3 = alive_deck_embarked['Survived'].sum() / alive_deck_embarked['Survived'].count()
@@ -581,12 +584,6 @@ plt.show()
 print(df_train.loc[df_train['Embarked'].isnull(),].sort_values(by=['Age'], ascending=False))
 
 ##
-
-
-# IMPUTATION: AGE
-# Impute missing age by sex and class group
-df_train['Age'] = df_train.groupby(['Sex', 'Pclass'])['Age'].apply(lambda x: x.fillna(x.median()))
-
 # Distribute of minor; the group with higher young people has higher mortality rate
 cols = ['Deck', 'Pclass']
 df_train.groupby(cols).filter(lambda x: x['Age'].quantile(q=0.75) > 50)['Survived'].mean()
