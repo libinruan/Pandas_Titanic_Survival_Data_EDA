@@ -13,8 +13,13 @@
 #     name: python3
 # ---
 
-##
+# Demographic information of the Kaggle Titanic data set is widely understated in this forum. In this post, I'm going to show you how to easily capture demographic information hidden in the full data set (the join of the training set and test set). You may be concernted about data leakage issues that often raise in data competition and interested in the related [discussion](https://www.kaggle.com/c/titanic/discussion/41928#235524). For the rest of this kernel, I'll simply use the entire data set for my demonstration and leave the judgement for your own modeling.
+#
+# Here is a list of observations I'm going to point out with advanced tricks of Pandas in conjunction with NumPy:
 
+# +
+##
+# Library we need 
 import pandas as pd
 import numpy as np
 import matplotlib as mpl
@@ -22,7 +27,6 @@ import matplotlib.pyplot as plt
 import matplotlib.pylab as pylab
 import seaborn as sns
 import warnings
-
 warnings.filterwarnings('ignore')
 
 # Configure Visualization Defaults
@@ -31,44 +35,54 @@ pylab.rcParams['figure.figsize'] = 12, 8
 sns.set_style('white')
 pd.set_option('display.max_columns', None)
 
-df_train = pd.read_csv(r'F:\GitHubData\Titanic\train.csv')
-df_test = pd.read_csv(r'F:\GitHubData\Titanic\test.csv')
+# +
+# Replace the following two directories with those in the following comments
+df_train = pd.read_csv(r'F:\GitHubData\Titanic\train.csv') # r"../input/train.csv"
+df_test = pd.read_csv(r'F:\GitHubData\Titanic\test.csv') # r"../input/test.csv"
 df_all = pd.concat([df_train, df_test], join='outer', axis=0)
 df_train.name = 'Training data'
 df_test.name = 'Test data'
+
+# We have 11 features and 1 target variables
 print(df_train.info())
-print(df_train.sample(1).T)
+# -
 
 # Dataset Dimensions
-print('-' * 30)
 print(f'Number of Training Examples: {df_train.shape[0]}')
 print(f'Number of Test Examples = {df_test.shape[0]}')
 print(f'Shape of Training Examples = {df_train.shape}')
 print(f'Shape of Test Examples = {df_test.shape}')
 
-# Column name lists
-print(sorted(df_train.columns.tolist()))  # sort() is not inapplicable
+# Column name we have
+print(sorted(df_train.columns.tolist())) 
 print(sorted(df_test.columns.tolist()))
 
-# Training data - categorical and numeric columns
-print('-' * 30)
+# Numeric variables in training set
 print(df_train.describe(include=[np.number]).T)
+print('-' * 30)
+# Categorical variables in training set
 print(df_train.describe(include=['O']).T)
 
-# Stat about missing values
-print('-' * 30)
 
+# +
+# Missing values
 def displayMissing(df):
     for col in df.columns.tolist():
         print(f'{col} column missing values: {df[col].isnull().sum()}')
 
-for df in [df_train, df_test]:
+for i, df in enumerate([df_train, df_test]):
     print(f'{df.name}')
     displayMissing(df)
+    if i == 0: print('-' * 30) 
 
+
+# -
+
+# As pointed out in many exploratory data analysis on Kaggle Titanic data set, we have missing values in continuous features `Age` and `Fare` and categorical features `Embarked` and `Cabin`. 
 
 # todo:  Ticket combination is the feature without any missing values.
-# We should try to extract any information from it although it appears useless at the first glance.
+# We should try to extract any information from it
+# although it appears useless at the first glance.
 def getTicketPrefixAndNumber(df, col):
     # naming the columns to be created
     col_num = col + '_num'
@@ -79,10 +93,10 @@ def getTicketPrefixAndNumber(df, col):
     df[col_num].fillna(-1, inplace=True)
 
     # get the entire string before a space followed by the last digit group
-    df[col_alp] = df[col].str.extract(r'(.*)\ \d+$').replace({'\.': '', '/': ''}, regex=True)
+    df[col_alp] = df[col].str.extract(r'(.*)\ \d+$')
+        #.replace({'\.': '', '/': ''}, regex=True)
     df[col_alp].fillna('M', inplace=True)
     return df
-
 
 getTicketPrefixAndNumber(df_all, 'Ticket')
 df_all['Ticket_num'] = pd.to_numeric(df_all['Ticket_num'])
@@ -92,7 +106,7 @@ df_all['Ticket_num'] = pd.to_numeric(df_all['Ticket_num'])
 islice = df_all.groupby('Ticket_num')['Ticket_alp'].transform(lambda x: x.nunique() > 1)
 df_all.loc[islice,:]
 
-#todo: after extracting information, we discard the ticket_num, ticket_alp columns, right?
+# todo: after extracting information, we'll discard the ticket_num, ticket_alp columns
 
 # check to see if the extraction works as expected
 colnames = ['Ticket' + s for s in ['', '_num', '_alp']]
@@ -107,56 +121,62 @@ df_all = pd.merge(df_all, temp, on='Ticket')
 #Check one of the family of size larger than 5
 df_all.loc[df_all.groupby('Ticket')['Age'].transform('count') > 5, :]['Ticket'].unique()
 
-#Get the group size, the number of non-NA examples
-
-#Application of Method 1.
-#Proportion of team member with survival rate available
+# todo: compute the credibility of the estimated survival rate for each travel team
+# The credibility is measure in terms of the proportion of valid `survived` data.
 def getCredibilitySurvivalRate(df):
     # To get the length of the column, don't use `count()`
     df['SRcredibility'] = pd.notnull(df['Survived']).sum() / df['Age'].shape[0]
     return df
 df_all = df_all.groupby('Ticket').apply(getCredibilitySurvivalRate)
 df_all.loc[df_all['Ticket'] == 'PC 17608',:]
-
+# By the way, compute the size of each travel team
 df_all['TeamSize'] = df_all.groupby('Ticket')['Age'].transform(lambda x: x.shape[0])
+# The correct size of family
+df_all['FamilySize'] = df_all['SibSp'] + df_all['Parch'] + 1
 
 """
 # So it appears team size is a useful predictor too.
-print(df_all.groupby(['TeamSize','Ticket'])['TeamSurvivalRate'].apply(lambda x: x.mean()).groupby(level=0).mean())
+print(df_all.groupby(['TeamSize','Ticket'])['TeamSurvivalRate'].\
+    apply(lambda x: x.mean()).groupby(level=0).mean())
 print(df_all.groupby(['Pclass', 'TeamSize'])['Survived'].mean())
-print(df_all.groupby(['Pclass', 'TeamSize'])['Survived'].mean().reset_index().sort_values(by='Survived'))
+print(df_all.groupby(['Pclass', 'TeamSize'])['Survived'].mean().
+    reset_index().sort_values(by='Survived'))
 
 islice = (df_all['Pclass'] == 3)  & (df_all['TeamSize'] == 11)
 df_all.loc[islice,:]
 """
 
-##
-
-# The correct size of family
-df_all['FamilySize'] = df_all['SibSp'] + df_all['Parch'] + 1
-
-# todo: who is a child? (I treat adult child only family as ordinary travel group!!)
-# So, I don't differentiate the sruvival rate in these grups with other non-child travel groups.
-
+# todo: who is a child?
+# create a new column `Role`
 def getRole(df, cutoff=7):
     df['Role'] = 'Man'
     df.loc[df['Sex'] == 'female', 'Role'] = 'Woman'
     df.loc[df['Age'] <= cutoff, 'Role'] = 'Child'
     return df
-
+# I want to hyper tune the age limit for the definition of a young child.
+# So I manually search over the integer sequence of [1,29]
+# and compute the corresponding survival rates of three types of role.
 ans = []
 ages = range(1, 30)
 for cut in ages:
     getRole(df_all, cutoff=cut)
     g = df_all.groupby(['Role'])
+    # I covert the resulting Pandas series to a data frame object and then append
+    # it to the `ans` list object.
     ans.append((g['Survived'].sum() / g['Survived'].count()).to_frame())
-temp = pd.concat(ans, axis=1)  # 3 by N (=len(ages))
-tb1 = pd.DataFrame(np.array(temp).T, columns=['Child', 'Man', 'Woman'], index=ages)  # N by 3
-tb1.index.name = 'Age'
-tb1.reset_index(inplace=True)  # prep for melt
-tb2 = pd.melt(tb1, id_vars=['Age'], value_vars=['Child', 'Man', 'Woman'], var_name='Role', value_name='Survival')
 
-# seaborn FacetGrid: [link](https://seaborn.pydata.org/generated/seaborn.FacetGrid.html)
+# To concatnate the data frames stored in the `ans` list object.
+temp = pd.concat(ans, axis=1)  # 3 by N (=len(ages))
+tb1 = pd.DataFrame(np.array(temp).T,
+                   columns=['Child', 'Man', 'Woman'], index=ages)  # N by 3
+tb1.index.name = 'Age'
+# Gonna melt the table tb1 for drawing a line plot
+tb1.reset_index(inplace=True)  # prep for melt
+tb2 = pd.melt(tb1, id_vars=['Age'], value_vars=['Child', 'Man', 'Woman'],
+              var_name='Role', value_name='Survival')
+
+# seaborn FacetGrid:
+# [link](https://seaborn.pydata.org/generated/seaborn.FacetGrid.html)
 g = sns.FacetGrid(tb2, col='Role', margin_titles=True)
 g = g.map(plt.plot, 'Age', 'Survival')
 # add vertical line
@@ -165,91 +185,122 @@ for ax in axes:
     ax.vlines(x=15, ymax=1, ymin=0, linestyles='dashed', alpha=0.3, colors='blue')
 plt.show()
 
-# I will temporarily set cutoffChildAge = 15 (60% survival rates) to approximate the survival rate of women
+# Temporarily set cutoffChildAge = 15 (60% survival rates)
 getRole(df_all, cutoff=15)
 
-# Distribution of teamsize
+# To have a sense of the distribution of TeamSize
 df_all.groupby(['Ticket']).first()['TeamSize'].value_counts()
 
-# Identify siblings
-# todo: are siblings values unique within each group?
+# todo: are SibSp values unique within groups?
 # Use this as an example: df_all.loc[df_all['Ticket_num']==17608,:]
+# Sanity check to see if children in the same travel team share the same SibSp value.
 # step 1. create a new column for children SibSp value only.
 df_all['childSibSp'] = np.where(df_all['Role'] == 'Child', df_all['SibSp'], 0)
+
 # step 2. is the childSibSp value unique within each travel group? Yes.
-df_all.groupby('Ticket_num')['childSibSp'].nunique().value_counts()
-# It means we can use childSibSp to identify siblings that is not covered by the 'Child'
+df_all.groupby('Ticket')['childSibSp'].nunique().value_counts()
+
+# So, We use childSibSp to identify siblings that is not covered by the 'Child'
 # definition.
 
-# step 3. In a group, let every entry can see the value 'childSibSp'
-df_all['childSibSp'] = df_all.groupby('Ticket_num')['childSibSp'].transform('max')
-# step 4. In a group, if the entry's SibSp equals to the value, he/she is a child.
-logic = (df_all['SibSp'] != 0) & (df_all['SibSp'] == df_all['childSibSp']) & (df_all['Role'] != 'Child')
+# step 3. Broadcasting: in a group, let every entry can see the shared 'childSibSp' value.
+df_all['childSibSp'] = df_all.groupby('Ticket')['childSibSp'].transform('max')
+# 'cz otherwise it's 0 by default.
+
+# step 4. If an example's SibSp equals to the shared value, the example must
+# from a elder child of age greater than the age limit for the child definition.
+logic = (df_all['SibSp'] != 0) & \
+        (df_all['SibSp'] == df_all['childSibSp']) &\
+        (df_all['Role'] != 'Child')
 df_all.loc[logic, 'Role'] = 'olderChild'
 
-# todo: how to identify female HH or male HH?
-df_all['childFamilySize'] = np.where(df_all['Role'].isin(['Child', 'olderChild']), df_all['FamilySize'], 0)
-df_all['childFamilySize'] = df_all.groupby('Ticket_num')['childFamilySize'].transform('max')
+# todo: who is the female household head and/or the male household head?
+# Step 1. Identify the FamilySize value of the youngest child in each travel team.
+df_all['childFamilySize'] = np.where(df_all['Role'].isin(['Child', 'olderChild']),
+                                     df_all['FamilySize'], 0)
+# Step 2. Broadcasting the FamilySize value of the youngest child to
+# other members in the same travel team
+df_all['childFamilySize'] = df_all.groupby('Ticket')['childFamilySize'].transform('max')
 
-
+# Step 3. identy people who are parents
 def isMotherOrFather(s):
     return 'Father' if s == 'Man' else 'Mother'
 
 slice_logic = ((df_all['FamilySize'] == df_all['childFamilySize']) & \
                (~df_all['Role'].isin(['Child', 'olderChild'])) & \
                (df_all['FamilySize'] > 0))
+# a trick to obtain the index of valid examples after logical operations
 slice_index = df_all.loc[slice_logic, :].index
-df_all.loc[slice_index, 'Role'] = df_all.loc[slice_logic, :]['Role'].apply(isMotherOrFather)
+df_all.loc[slice_index, 'Role'] = \
+    df_all.loc[slice_logic, :]['Role'].apply(isMotherOrFather)
 
 df_all['ChildWAdult'] = 'Not Applicable'
 logic = (df_all['Role'].isin(['Child', 'olderChild']))
-df_all.loc[logic, 'ChildWAdult'] = np.where((df_all.loc[logic, 'FamilySize'] > df_all.loc[logic, 'childSibSp'] + 1),
-                                            'Yes', 'No')
+df_all.loc[logic, 'ChildWAdult'] = np.where(
+    df_all.loc[logic, 'FamilySize'] > df_all.loc[logic, 'childSibSp'] + 1,
+    'Yes',
+    'No'
+)
 
-# How many children in this group?
+# todo: How many children in this group?
 #Method 1.
-df_all['NumChild'] = df_all.groupby('Ticket_num')['Role'].transform(lambda x: x.isin(['Child', 'olderChild']).sum())
-df_all['NumYoungChild'] = df_all.groupby('Ticket_num')['Role'].transform(lambda x: x.isin(['Child']).sum())
+df_all['NumChild'] = df_all.groupby('Ticket')['Role'].\
+    transform(lambda x: x.isin(['Child', 'olderChild']).sum())
+df_all['NumYoungChild'] = df_all.groupby('Ticket')['Role'].\
+    transform(lambda x: x.isin(['Child']).sum())
+
 """
 #Method 2.
-numChildDict = df_all.groupby('Ticket_num')['Age']\
+numChildDict = df_all.groupby('Ticket')['Age']\
     .apply(lambda x: (x <= cutoffChildAge).sum()).reset_index(name='NumChild')
-df_all.join(numChildDict, on='Ticket_num')
+df_all.join(numChildDict, on='Ticket')
 """
 
-# although the survival rate by number of child varies, the highest survival rate
+# Although the survival rate by number of child varies, the highest survival rate
 # falls in family of three children and it holds across classes.
 print(df_all.groupby(['Pclass', 'NumChild'])['Survived'].mean())
-# So, number of children should be another good predictor.
+# So, number of children should be another good predictor;
+# In passenger classes 1 and 2, families with three children have higher
+# estimated survival rates.
 
-#
 # todo: travel with dad, mom, or both? Is with mother better than with father? NO.
-# does the group have mom?
-# This works
-# But not this, if you move ['Role'] inside the lambda function.
-df_all['hasMother'] = df_all.groupby('Ticket_num')['Role'].transform(lambda x: (x == 'Mother').sum() > 0)
-df_all['hasFather'] = df_all.groupby('Ticket_num')['Role'].transform(lambda x: (x == 'Father').sum() > 0)
-df_all['hasBothParents'] = np.where(df_all['hasMother'] & df_all['hasFather'], True, False)
 
+# This works
+# Note: if you move ['Role'] inside transform's lambda function, it fails.
+# Below I compare two different approaches for completing similar logical
+# operation tasks.
+
+# 1. The usual method for broadcasting simple logical operations.
+df_all['hasMother'] = df_all.groupby('Ticket')['Role'].\
+    transform(lambda x: (x == 'Mother').sum() > 0)
+df_all['hasFather'] = df_all.groupby('Ticket')['Role'].\
+    transform(lambda x: (x == 'Father').sum() > 0)
+df_all['hasBothParents'] = np.where(
+    df_all['hasMother'] & df_all['hasFather'],
+    True,
+    False
+)
+
+# 2. Advanced Method: more complicated logical operations
 logics = [(df_all['hasFather'] & ~df_all['hasMother'], 'with Father'),
           (df_all['hasFather'] & df_all['hasMother'], 'with Both'),
           (~df_all['hasFather'] & df_all['hasMother'], 'with Mother'),
           (~df_all['hasFather'] & ~df_all['hasMother'], 'without Parents')]
 for logic, s in logics:
-    ans = df_all.loc[df_all['Age'] <= 10, :].loc[logic, :].groupby('Ticket_num')['Survived'].mean().mean()
+    ans = df_all.loc[df_all['Age'] <= 10, :].loc[logic, :].\
+        groupby('Ticket')['Survived'].mean().mean()
     print(f"{s:>15} {ans: .2f}")
 
 """
-# check only father groups
+# Sanity check for only father groups
 index = df_all.loc[df_all['hasFather'],:].index
 df_all.loc[index,:].groupby('Ticket_num').groups.keys()
 df_all.loc[df_all['Ticket_num']==2079,:]
 """
 
-
-
+"""
 # See this link: https://medium.com/@ODSC/creating-if-elseif-else-variables-in-python-pandas-7900f512f0e4
-""" Each method in this block works!!
+
 #Method 1. Not exactly what I want; it only identify the entry of mother, but
 #I want the result to be broadcasted to everyone in the same group.
 role = 'Mother'
@@ -275,8 +326,9 @@ df_all['test3'] = df_all['isMotherSurvived'].where(df_all['Role'].eq('Mother'))\
     .groupby(df_all['Ticket_num']).transform('first').fillna('not applicable')
 """
 
-
+# The compact version based on the preceding uncommented methods 1 and 2.
 # So, we can do it automatically based on the experimental code block above.
+
 role = 'Mother'
 def isSurvived(df_all, role='Mother'):
     # Step 1. Identify a mother's life status
@@ -292,11 +344,11 @@ def isSurvived(df_all, role='Mother'):
         .groupby(df_all['Ticket_num']).transform('first').fillna('not applicable')
     return df_all
 
-
 roles = ['Mother', 'Father']
 for role in roles:
     isSurvived(df_all, role=role)
 
+# todo: get the prefix of Cabin feature.
 
 def getCabinPrefix(df):
     # 'M' is assigned to missing values
@@ -331,14 +383,16 @@ df_all.loc[df_all['Ticket_alp'] == 'PC']['Survived'].sum()
 # Check Family Ryerson. The number of SibSp and Parch might have more information.
 """
 
+# todo: extract names and titles
 
-# Extract names and titles
 def getLastNameAndTitle(df):
     # (1) https://docs.python.org/2/library/re.html
-    # (2) Why this patterns works? See the [reason](https://stackoverflow.com/questions/12148784/extract-text-before-first-comma-with-regex#answer-12148814).
-    # (3) This pattern works as well r'^([^,]*)'  See the reference [link](https://stackoverflow.com/questions/12187287/capturing-string-right-before-comma-in-regex/12187415#answer-12187415)
+    # (2) Why this patterns works? See the [reason](https://shorturl.at/uAEM8).
+    # (3) This pattern works as well r'^([^,]*)'
+    # See the reference [link](https://shorturl.at/dwJMS)
     df['LastName'] = df['Name'].str.extract(r'^(.+?),')
-    df['Title'] = df['Name'].str.split(', ', expand=True)[1].str.split('.', expand=True)[0]
+    df['Title'] = df['Name'].str.split(', ', expand=True)[1].\
+        str.split('.', expand=True)[0]
     return df
 
 getLastNameAndTitle(df_all)
@@ -349,7 +403,7 @@ cols = ['Name', 'Title', 'LastName']
 # colon cannot be ignored in df_all.loc[:,cols]
 df_all.loc[:, cols]
 
-# People with the same surname may come from different families, for example,
+# finding: People with the same surname may come from different families, for example,
 # check the group of surname 'Davies' we found Ticket #48871 corresponds
 # to three young men; ticket #33112 corresponds to one women of age 48 and
 # and a child with the same surname of age 8. However, an issue is found
@@ -361,10 +415,12 @@ df_all.loc[:, cols]
 df_all.loc[df_all['LastName'] == 'Davies', :].sort_values(by=['Ticket_num'])
 """
 
-# Is it possible to have two Mrs in a travelling group? N
+# todo: sanity check: Is it possible to have two Mrs in a travelling group? NO.
 # Trick#1: conditinal count after groupby
 # The answer is no.
-df_all.groupby('Ticket_num')['Ticket'].apply(lambda x: (x == 'Mrs').sum()).reset_index(name='MrsCount')
+
+df_all.groupby('Ticket')['Ticket'].\
+    apply(lambda x: (x == 'Mrs').sum()).reset_index(name='MrsCount')
 
 """
 # Example of displaying group results
@@ -391,9 +447,9 @@ for i, g in gs.groups.items():
         
 # We found: the record of the Christy indicates there are two children but only one shown.
 df_all.loc[df_all['LastName'] == 'Christy', :]        
-"""
 
-"""Broadcasting
+
+#Broadcasting
 #Identify travelling groups with children among which who are parents?
 # 
 def addMaxParchMinSibSp(grp):
@@ -405,82 +461,109 @@ def addMaxParchMinSibSp(grp):
 df_all = df_all.join(df_all.groupby('Ticket_num').apply(addMaxParchMinSibSp), on='Ticket_num')
 """
 
-
-# todo: who is the parents
-# todo: sibliing in the same family use their sibling's age to impute missing value
-
-# we assume the most frequent LastName shown in a travel group is the family name.
-# Disable the line below. `Family` is no longer useful once we make use of ticket combination.
-#df_all['Family'] = df_all.groupby(['Ticket_num'])['LastName'].transform(lambda x: x.value_counts().index[0])
-
 """
-# identify who's with a baby and who's a baby COLMN OPERATIONS.
-# Method 1.
+# LOGICAL OPERATIONS -----------------------------------------------------------
+
+# Method 1. dataframe.where()
 # df_all['isMother'] = False
-# df_all['isMother'] = df_all['isMother'].where((df_all['Title'] != 'Mrs') | (df_all['hasMaster'] != True), True)
-# Method 2.
-df_all['MotherWithMaster'] = np.where((df_all['Title'] == 'Mrs') & (df_all['hasMaster'] == True), True, False)
+# df_all['isMother'] = df_all['isMother'].\
+    where((df_all['Title'] != 'Mrs') | (df_all['hasMaster'] != True), True)
+
+# Method 2. np.where()
+df_all['MotherWithMaster'] = np.where(
+    (df_all['Title'] == 'Mrs') & (df_all['hasMaster'] == True), 
+    True, 
+    False
+)
 df_all.loc[df_all['Title'] == 'Master', :][['Age', 'Survived']].mean()  # 5.48, 57%
-# Method 3.
+
+# Method 3. np.logical_and()
 def MWM(df):
-    return df.apply(lambda x: 1 if np.logical_and(x['Title'] == 'Mrs', x['Sex'] == 'female') else 0, axis=1)
+    return df.apply(lambda x: 1 if 
+        np.logical_and(x['Title'] == 'Mrs', x['Sex'] == 'female') 
+        else 0, axis=1)
 df_all['test'] = MWM(df_all)
 df_all.head(10)
-"""
 
-"""
-# Mark any group travelling with mother and children
-# Method 1. use transform
-temp1 = df_all.groupby(['Ticket_num'])['Title'].transform(lambda x: x.eq('Master').any())
-temp2 = df_all.groupby(['Ticket_num'])['MotherWithMaster'].transform(lambda x: x.eq(True).any())
+# BROADCASTING OPERATIONS -----------------------------------------------------------
+# Identify teams travelling with mother and children
+
+# Method 1. use `transform`
+
+temp1 = df_all.groupby(['Ticket'])['Title'].\
+    transform(lambda x: x.eq('Master').any())
+temp2 = df_all.groupby(['Ticket'])['MotherWithMaster'].\
+    transform(lambda x: x.eq(True).any())
 df_all['GroupWMomChild'] = temp1 & temp2
 
-# Method 2-A. use apply-turned dictionary and map IT WORKS!!
-# temp5 = df_all.groupby('Ticket_num').apply(lambda x: x['Title'].eq('Master').any() & x['MotherWithMaster'].eq(True).any())
-# df_all['GroupWMomChild_3'] = df_all['Ticket_num'].map(temp5)
+# Method 2-A. use apply-turned `dictionary` and `map` IT WORKS!!
+
+# temp5 = df_all.groupby('Ticket').apply(
+#       lambda x: x['Title'].eq('Master').any() & x['MotherWithMaster'].eq(True).any())
+# df_all['GroupWMomChild_3'] = df_all['Ticket'].map(temp5)
 
 # Method 2-B. use apply and merge IT WORKS!!
-# temp3 = df_all.groupby(['Ticket_num']).apply(lambda x: x['Title'].eq('Master').any())
-# temp4 = df_all.groupby(['Ticket_num']).apply(lambda x: x['MotherWithMaster'].eq(True).any())
+
+# temp3 = df_all.groupby(['Ticket']).apply(lambda x: x['Title'].eq('Master').any())
+# temp4 = df_all.groupby(['Ticket']).apply(lambda x: x['MotherWithMaster'].eq(True).any())
 # df_all.merge((temp3 & temp4).reset_index(), how='left').rename(columns={0: 'GroupWMomChild_2'})
 """
 
-#Embarged (Categorical Variables) Imputation
-# IMPUTATION: EMBARKED
+# todo: impute missing EMBARKED values using K nearest neighbors algorithm
 # They more likely board on the ship at port S -- Theory 1.
 df_all.loc[df_all['Embarked'].isnull(),:]
+
 print(df_all.loc[df_all['Ticket_num'].between(100000, 125000)]['Embarked'].value_counts())  # S
 print(df_all.loc[df_all['Fare'].between(60, 100)]['Embarked'].value_counts())  # S
+
 # It's hard to tell which port they boarded from only based on their `Pclass` and `Fare` features.
-df_all.groupby(['Pclass',pd.cut(df_all['Fare'],range(50,100,15))])['Embarked'].apply(lambda x: x.value_counts().nlargest(3))
-# So I make use of the information contained in the ticket combination
-# Here is what I did.
-# data index corresponding to valid 'Embarked' data
+df_all.groupby(['Pclass',pd.cut(df_all['Fare'],range(50,100,15))])['Embarked'].\
+    apply(lambda x: x.value_counts().nlargest(3))
+
+# So I decide to make use of the information contained in the ticket combination:
+# Step 1. identifying data index corresponding to valid 'Embarked' data.
 index = df_all['Embarked'].isnull()
-# we only use three features to predict missing value
+# We are comfortable to only use three features to predict missing value.
 _dfAll = df_all.loc[:, ['Embarked', 'Pclass', 'Ticket_alp', 'Ticket_num']].copy()
 
+# Step 2. labeling and normalizing the feature matrix
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 encoder = LabelEncoder()
 minmax_scale = MinMaxScaler(feature_range=(0,1))
-# Encode columns 'Pclass' and 'Ticket_alp'
+
+# Step 2-A. encoding columns 'Pclass' and 'Ticket_alp'
 # https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.LabelEncoder.html
 # Note below that `fit_transform()` expects a 2D array, but encoder returns a 1D array
 # So we need to reshape it.
-for i in range(1,3):
+for i in range(1,4):
     temp = encoder.fit_transform(_dfAll.iloc[:,i]).reshape(-1,1)
     _dfAll.iloc[:, i] = minmax_scale.fit_transform(temp)
+
 # Our feature matrix consists of `Pclass`, `Ticket_alp`, and `Ticket_num`.
 _xtrain = _dfAll.loc[~index,_dfAll.columns[1:4]]
-# Standardizing
 _ytrain = encoder.fit_transform(_dfAll.loc[~index, 'Embarked'])
 
+# Step 3. prediction with k nearest neighbors algorithm
 from sklearn.neighbors import KNeighborsClassifier
-#https://scikit-learn.org/stable/modules/generated/sklearn.neighbors.KNeighborsClassifier.html
+# https://scikit-learn.org/stable/modules/generated/sklearn.neighbors.KNeighborsClassifier.html
 knc = KNeighborsClassifier(3, weights='distance')
 trained_knc = knc.fit(_xtrain, _ytrain)
 predicted_embarked_missing = trained_knc.predict(_dfAll.loc[index, _dfAll.columns[1:4]])
+# update the missing value with what we just obtained.
 df_all.loc[index,'Embarked'] = encoder.inverse_transform(predicted_embarked_missing) # S
+
+# todo: Fare () Imputation based on the size of the travel team and passneger class.
+#print(df_all.loc[df_all['Fare'].isnull(),:]) # index = 973
+islice = (df_all['Pclass'] == 3)
+sns.scatterplot(x='Age', y='Fare', size= 'TeamSize', data=df_all.loc[islice,:]); plt.show()
+# impute
+df_all['Fare'] = df_all.groupby(['Pclass','TeamSize'])['Fare']\
+    .transform(lambda x: x.fillna(x.median()))
+print(df_all.iloc[973,:])
+
+# 0. Ticekt_num is more useful than LastName (aka Family)
+# 1. even in the same family, when women are alive, men are not necessarily alive. Ticket#19950
+# 2. friends or colleauges are probably in the same ticket number group
 
 ##Survival rate computation
 cols = df_all.columns
@@ -499,41 +582,7 @@ df_all.loc[df_all['Ticket_num'] == 347077, cols]  # team with a mother that surv
 # It appears none of them are relatives except Lam Ali and Lam Len.
 df_all.loc[df_all['Ticket_num'] == 1601, cols]
 
-
-#Fare () Imputation
-#print(df_all.loc[df_all['Fare'].isnull(),:]) # index = 973
-islice = (df_all['Pclass'] == 3) & (df_all['TeamSize'] == 1)
-sns.scatterplot(x='Age', y='Fare', data=df_all.loc[islice,:]); plt.show()
-# impute
-df_all['Fare'] = df_all.groupby(['Pclass','TeamSize'])['Fare']\
-    .transform(lambda x: x.fillna(x.median()))
-#print(df_all.iloc[973,:])
-
-##todo: Survival Rate considering missing values
-#anyone survived, how much percetange does the team member survive?
-df_all.groupby('Ticket_num')
-
-
-##
-
-
-# Ticekt_num is more useful than LastName (aka Family)
-
-# ToDo: Error Analysis can have lots of information!!
-# ToDo: check to see missing Cabin value (before imputed) leads to higher morality rate? Ticket#347088
-# ToDo: does our group have master? does our group have servant?
-# ToDo: check the survival rate of master. See ticket#347077, not every master is alive.
-# ToDo: even masters with parents die. See ticket#347082
-# ToDo: Missing Deck can be "imputed" from travel group (Ticket_num). Ticket#17608
-# ToDo: Similarly, missing cabin of servant is not the same as their employer. Ticket#17608
-# ToDo: Calculate the family survival rate is a good idea. Inspect it on training data.
-# ToDo: Calculate the family survival rate to infer the other femail's survival rate
-# ToDo: even in the same family, when women are alive, men are not necessarily alive. Ticket#19950
-# ToDo: friends or colleauges are probably in the same ticket number group
-# ToDo: group (ticket number) survival rate should have two indicators by sex (Ticket#14879)
-# ToDo: do people that travel alone have higher survival rates?
-
-##
+# #
 
 # Ticket Number Distribution by Pclass and Embarked
 # The plot doesn't help to impute the two missing Embarked value, both of which are in Pclass = 1.
@@ -550,51 +599,52 @@ g.set(xticks=[range(10,70,10)])
 [plt.setp(ax.get_xticklabels(), rotation=90) for ax in g.axes.flat]
 plt.show()
 
-# #Add percentage bar number 1
-
-# #Add percentage bar number 2
-
-# Deck and Embarked combined could be a good predictor
-df_train[['Deck', 'Embarked', 'Sex', 'Survived']].groupby(['Sex', 'Deck', 'Embarked']).mean()
-
-##
-# Percentage of passenger by Embarked Ports but shown in order of Deck and Embarked
-deck_embarked = df_train[['Deck', 'Embarked', 'Survived']].groupby(['Deck', 'Embarked']).count()
-# solution 1
-tb1 = deck_embarked.groupby(level=1).apply(lambda x: 100 * x / float(x.sum()))
-tb1.rename(columns={'Survived': 'Passengers (%)'})
-# solution 2
-tb2 = 100 * deck_embarked / deck_embarked.groupby(level=1).transform('sum')
-tb2.rename(columns={'Survived': 'Passengers (%)'})
-
-##
-# Survival rate by Embarked Port but shown in order of Deck and Embarked
-alive_deck_embarked = df_train[['Deck', 'Embarked', 'Survived']].groupby(['Deck', 'Embarked'])
-tb3 = alive_deck_embarked['Survived'].sum() / alive_deck_embarked['Survived'].count()
-tb3.sort_values(ascending=False)
-
 ##
 g = sns.FacetGrid(df_train, col='Pclass', row='Embarked', hue='Deck')
 g = g.map(plt.scatter, 'Age', 'Fare')
 g.add_legend()
 plt.show()
 
-# Only two missing Embarked values. Both are female from class 1 and share the same ticket number.
-# Sort by age
-print(df_train.loc[df_train['Embarked'].isnull(),].sort_values(by=['Age'], ascending=False))
 
-##
-# Distribute of minor; the group with higher young people has higher mortality rate
+"""
+# Percentage of survived passengers by EMBARKED values -------------------------
+
+deck_embarked = df_train[['Deck', 'Embarked', 'Survived']].\
+    groupby(['Deck', 'Embarked']).count()
+
+# solution 1
+tb1 = deck_embarked.groupby(level=1).apply(lambda x: 100 * x / float(x.sum()))
+tb1.rename(columns={'Survived': 'Passengers (%)'})
+
+# solution 2
+tb2 = 100 * deck_embarked / deck_embarked.groupby(level=1).transform('sum')
+tb2.rename(columns={'Survived': 'Passengers (%)'})
+
+# Group Selection Operation ----------------------------------------------------
 cols = ['Deck', 'Pclass']
-df_train.groupby(cols).filter(lambda x: x['Age'].quantile(q=0.75) > 50)['Survived'].mean()
-df_train.groupby(cols).filter(lambda x: x['Age'].quantile(q=0.75) < 30)['Survived'].mean()
+df_train.groupby(cols).filter(lambda x: x['Age'].\
+    quantile(q=0.75) > 50)['Survived'].mean()
+df_train.groupby(cols).filter(lambda x: x['Age'].\
+    quantile(q=0.75) < 30)['Survived'].mean()
 
-# #Plot training set survival distribution
+"""
+
+
+
+
+# #Add percentage bar number 1
+
+# #Add percentage bar number 2
+
+# Plot training set survival distribution
 # https://i.postimg.cc/25rVKwxB/1590377048.png
 # https://python-graph-gallery.com/13-percent-stacked-barplot/
 
+
 # #Categorical variable plot
+
 
 # #Continuous variable plot
 
 # #Fare binning with qcut or cut
+
