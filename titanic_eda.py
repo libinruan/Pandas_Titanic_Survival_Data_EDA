@@ -13,9 +13,15 @@
 #     name: python3
 # ---
 
-# Demographic information of the Kaggle Titanic data set is widely understated in this forum. In this post, I'm going to show you how to easily capture demographic information hidden in the full data set (the join of the training set and test set). You may be concernted about data leakage issues that often raise in data competition and interested in the related [discussion](https://www.kaggle.com/c/titanic/discussion/41928#235524). For the rest of this kernel, I'll simply use the entire data set for my demonstration and leave the judgement for your own modeling.
+# #### Can identifying families with children help boost the accuracy?
+
+# For the classificiation purpose in the data competition, the value of demographic information implied by the ticket combination in the Kaggle Titanic data set (hereafter, the Titanic data) is widely understated. In this post, I'm going to show you how to expose demographic information hidden in the full data set (the join of the training set and test set) of the Titanic data, and hopefully help us boost our prediction accuracy.
+#
+# Note: If you are concerned about data leakage that araises in data processing before splitting the data set, you may find this [discussion](https://www.kaggle.com/c/titanic/discussion/41928#235524) interesting. For the purose that is more of winning the competition than generalization, I'll simply use the full data set as the basis of feature eningeering and leave the data leakage judgement for you.
 #
 # Here is a list of observations I'm going to point out with advanced tricks of Pandas in conjunction with NumPy:
+
+# #### EDA
 
 # +
 ##
@@ -39,7 +45,10 @@ pd.set_option('display.max_columns', None)
 # Replace the following two directories with those in the following comments
 df_train = pd.read_csv(r'F:\GitHubData\Titanic\train.csv') # r"../input/train.csv"
 df_test = pd.read_csv(r'F:\GitHubData\Titanic\test.csv') # r"../input/test.csv"
-df_all = pd.concat([df_train, df_test], join='outer', axis=0)
+
+# inconsistent columns so we 
+# use concat, rather than pd.merge(df_train, df_test, on = [...], how = 'inner')
+df_all = pd.concat([df_train, df_test], join='outer', axis=0) 
 df_train.name = 'Training data'
 df_test.name = 'Test data'
 
@@ -68,7 +77,7 @@ print(df_train.describe(include=['O']).T)
 # Missing values
 def displayMissing(df):
     for col in df.columns.tolist():
-        print(f'{col} column missing values: {df[col].isnull().sum()}')
+        print(f'{col:11s} NO. missing values: {df[col].isnull().sum()}')
 
 for i, df in enumerate([df_train, df_test]):
     print(f'{df.name}')
@@ -78,8 +87,11 @@ for i, df in enumerate([df_train, df_test]):
 
 # -
 
-# As pointed out in many exploratory data analysis on Kaggle Titanic data set, we have missing values in continuous features `Age` and `Fare` and categorical features `Embarked` and `Cabin`. 
+# As pointed out in many exploratory data analysis on Kaggle Titanic data set, we have missing values in continuous features `Age` and `Fare` and nominal variables `Embarked` and `Cabin`. 
 
+# #### Ticket combination
+
+# +
 # todo:  Ticket combination is the feature without any missing values.
 # We should try to extract any information from it
 # although it appears useless at the first glance.
@@ -89,125 +101,189 @@ def getTicketPrefixAndNumber(df, col):
     col_alp = col + '_alp'
 
     # get the last group of contiguous digits
+    # vectorize string function with str method
+    # get any contignuous nuemrical digits from the end
+    # return anything that matches the pattern specified inside the parenthesis 
     df[col_num] = df[col].str.extract(r'(\d+)$')
     df[col_num].fillna(-1, inplace=True)
 
-    # get the entire string before a space followed by the last digit group
+    # get the complete string before a space that is followed by a trailing number group
     df[col_alp] = df[col].str.extract(r'(.*)\ \d+$')
-        #.replace({'\.': '', '/': ''}, regex=True)
+    # sidenote: .replace({'\.': '', '/': ''}, regex=True)
     df[col_alp].fillna('M', inplace=True)
     return df
 
-getTicketPrefixAndNumber(df_all, 'Ticket')
+getTicketPrefixAndNumber(df_all, 'Ticket').head()
+# -
+
+print(df_all.Ticket_num.describe())
+print('-' * 30) 
 df_all['Ticket_num'] = pd.to_numeric(df_all['Ticket_num'])
+print(df_all.Ticket_num.describe())
 
-#Are there any people sharing the same ticket number but come from different team? Yes.
-#So, throughout the EDA, we should use 'Ticket', instead of 'Ticket_num' only, as the groupby key
-islice = df_all.groupby('Ticket_num')['Ticket_alp'].transform(lambda x: x.nunique() > 1)
-df_all.loc[islice,:]
-
-# todo: after extracting information, we'll discard the ticket_num, ticket_alp columns
-
-# check to see if the extraction works as expected
+# check to see if the string decomposition works as expected.
 colnames = ['Ticket' + s for s in ['', '_num', '_alp']]
-df_all[colnames]
+df_all[colnames].head()
 
-# survival rate varies across ticket number prefix; it can be a predictor, right?
+# #### Travel group
+# Are there any people sharing the same ticket number but actually come from different travel groups (identified by ticket combination)? The answer is Yes. In such a case, I use `Ticket`, rather than `Ticket_num` to define a travel group. Using `last name` to define a travel group as seen in many kernels is not good enough for my purpose. People travelling together as a group should bear similar characteristics related to their survival rates in this travel disaster. Members of a travel group do not necessary share biological relathinship.
+
+islice = df_all.groupby('Ticket_num')['Ticket_alp'].transform(lambda x: x.nunique() > 1)
+df_all.loc[islice,:].sort_values(by=['Ticket_num']).head(6)
+
+# #### Survival rate
+# Check to see if survival rate (based on available Survived feature) varies across ticket combinations.
+
 gtb1 = df_all[['Survived', 'Ticket']].groupby(['Ticket'])
+# compute the groupwise survival rates (percentage) # pd.count() counts non-NA cells
 temp = (gtb1['Survived'].sum() / gtb1['Survived'].count() * 100).sort_values()
+# name the resulting column to be used in the merge below
 temp.name = 'TeamSurvivalRate'
+# one-to-many merge on column Ticket
 df_all = pd.merge(df_all, temp, on='Ticket')
 
-#Check one of the family of size larger than 5
-df_all.loc[df_all.groupby('Ticket')['Age'].transform('count') > 5, :]['Ticket'].unique()
+# #### Size of family and travel group
+# Check if there exist travel groups with members of size larger than 5.
+#
+# Note: `pd.count()` doesn't count NA cells. If use it rather than `pd.size()` to count group size on Survived feature, the resulting group size is not correct.
 
-# todo: compute the credibility of the estimated survival rate for each travel team
-# The credibility is measure in terms of the proportion of valid `survived` data.
-def getCredibilitySurvivalRate(df):
-    # To get the length of the column, don't use `count()`
-    df['SRcredibility'] = pd.notnull(df['Survived']).sum() / df['Age'].shape[0]
-    return df
-df_all = df_all.groupby('Ticket').apply(getCredibilitySurvivalRate)
+df_all.loc[df_all.groupby('Ticket')['Survived'].transform('size') > 5, :]['Ticket'].unique()
+
+# For example, the travel group of ticket combination `S.O.C. 14879` has more than five members (two of which have unknown Survived features).
+
+df_all.loc[df_all.Ticket=='S.O.C. 14879',['Ticket', 'Survived']]
+
+# For example, the family of ticket combination `PC 17608` travles in a group with two other non-biological relationship members `PassengerId` = 951 and 1267.
+
 df_all.loc[df_all['Ticket'] == 'PC 17608',:]
-# By the way, compute the size of each travel team
-df_all['TeamSize'] = df_all.groupby('Ticket')['Age'].transform(lambda x: x.shape[0])
-# The correct size of family
+
+# Besides, here is the biggest family/group in the Titanic data:
+
+df_all.loc[df_all['Ticket'] == 'CA. 2343',:]
+
+# If use it rather than `pd.size()` to count group size on Survived feature, 
+# the resulting group size is not correct.
+df_all.loc[df_all.groupby('Ticket')['Survived'].transform('count') > 5, :]['Ticket'].unique()
+
+# Trave group varies in size. I create a feature `TeamSize` to count the total number of people in a group of the same ticket comibnation. For the estimate of family size, it is pretty straightforward to account for the entry itself in addition to the number of its siblings, parents and childrens.
+
+df_all['TeamSize'] = df_all.groupby('Ticket')['Survived'].transform(lambda x: x.shape[0]) # ~ x.size
+
+# The correct size of a family
 df_all['FamilySize'] = df_all['SibSp'] + df_all['Parch'] + 1
 
-"""
-# So it appears team size is a useful predictor too.
-print(df_all.groupby(['TeamSize','Ticket'])['TeamSurvivalRate'].\
-    apply(lambda x: x.mean()).groupby(level=0).mean())
-print(df_all.groupby(['Pclass', 'TeamSize'])['Survived'].mean())
-print(df_all.groupby(['Pclass', 'TeamSize'])['Survived'].mean().
-    reset_index().sort_values(by='Survived'))
+# More than $76\%$ of travel groups are composed of one person only. 
 
-islice = (df_all['Pclass'] == 3)  & (df_all['TeamSize'] == 11)
-df_all.loc[islice,:]
-"""
+# To have a sense of the distribution of TeamSize
+g = df_all.groupby(['Ticket']).first()['TeamSize'].value_counts()
+ans = g / g.sum() * 100 # convert to percentrage
+# Tabularize
+ans.index = ans.index.astype(int)
+ans.index.name = 'Group Size'
+pd.DataFrame(ans).rename(columns={'TeamSize': 'Percentage'}).T
 
-# todo: who is a child?
-# create a new column `Role`
+# The following code shows that team size might be a useful predictor for survival rates.
+
+df_all.groupby(['TeamSize','Ticket'])['TeamSurvivalRate'].mean().groupby(level=0).mean()
+
+df_all.groupby(['Pclass', 'TeamSize'])['TeamSurvivalRate'].mean()
+
+# Based on the estimated group survival rate, regardless of passenger class, the top three groups tend to include groups of size four and three.
+
+# This code results in the sorting of Teamsize within passenger class by team survival rate.
+print(df_all.groupby(['Pclass', 'TeamSize'])['TeamSurvivalRate'].mean(). \
+    reset_index().sort_values(by=['Pclass','TeamSurvivalRate']))
+
+# We can further obtain the class-wise top three groups in terms of team survival rate.
+# Just append "groupby(['Pclass']).tail(3)".
+print(df_all.groupby(['Pclass', 'TeamSize'])['TeamSurvivalRate'].mean(). \
+    reset_index().sort_values(by=['Pclass','TeamSurvivalRate']).groupby(['Pclass']).tail(3))
+
+
+# #### Credibility of group survival rate
+# The credibility of a group survival rate is measured in terms of the proportion of valid `Survived` feature. I will use it as a weight to adjust the `TeamSurvivalRate` feature.
+
+# +
+def getCredibilitySurvivalRate(df):
+    # Use `size` or `shape[0]` to get the full length of a series
+    # When summing over cells of {0,1,NaN}, 
+    # regardless of the use of `pd.notnull()`, the outcome is identical.
+    df['SRcredibility'] = pd.notnull(df['Survived']).sum() / df['Survived'].size 
+    return df
+
+df_all = df_all.groupby('Ticket').apply(getCredibilitySurvivalRate)
+
+
+# -
+
+# #### Type of family roles
+# For flexibility in tuning hyper parameters like the age threshold for the definition of a child, I introduce the `cutoff` argument for the maximum child age and set the default cutoff age to 7. Then I do something like a grid search on the integer interval $[1, 29]$ to see the impact of the cutoff age configuratio on the estimate of survival rates by gender.
+
+# +
 def getRole(df, cutoff=7):
     df['Role'] = 'Man'
     df.loc[df['Sex'] == 'female', 'Role'] = 'Woman'
     df.loc[df['Age'] <= cutoff, 'Role'] = 'Child'
     return df
-# I want to hyper tune the age limit for the definition of a young child.
-# So I manually search over the integer sequence of [1,29]
-# and compute the corresponding survival rates of three types of role.
+
 ans = []
 ages = range(1, 30)
 for cut in ages:
     getRole(df_all, cutoff=cut)
     g = df_all.groupby(['Role'])
-    # I covert the resulting Pandas series to a data frame object and then append
-    # it to the `ans` list object.
+    # [1] I covert the resulting Pandas series to a data frame object and then append
+    # it to the `ans` list object so that I can concatenate them in one step. later.
     ans.append((g['Survived'].sum() / g['Survived'].count()).to_frame())
+# -
 
-# To concatnate the data frames stored in the `ans` list object.
+# [2] To concatnate the data frames stored in the `ans` list object.
 temp = pd.concat(ans, axis=1)  # 3 by N (=len(ages))
+# [3] convert 3 by N table to N by 3 table
 tb1 = pd.DataFrame(np.array(temp).T,
                    columns=['Child', 'Man', 'Woman'], index=ages)  # N by 3
 tb1.index.name = 'Age'
-# Gonna melt the table tb1 for drawing a line plot
+# [4] melt the table tb1 for drawing a line plot
 tb1.reset_index(inplace=True)  # prep for melt
 tb2 = pd.melt(tb1, id_vars=['Age'], value_vars=['Child', 'Man', 'Woman'],
               var_name='Role', value_name='Survival')
 
-# seaborn FacetGrid:
-# [link](https://seaborn.pydata.org/generated/seaborn.FacetGrid.html)
+# Here I'm going to use seaborn facetGrid for drawing the line plot ([searborn.FaceGrid](https://seaborn.pydata.org/generated/seaborn.FacetGrid.html) document).
+
+# +
+# [5] FacetGrid and mapping plot functions to each grid
 g = sns.FacetGrid(tb2, col='Role', margin_titles=True)
 g = g.map(plt.plot, 'Age', 'Survival')
+
 # add vertical line
 axes = g.fig.axes
 for ax in axes:
     ax.vlines(x=15, ymax=1, ymin=0, linestyles='dashed', alpha=0.3, colors='blue')
 plt.show()
+# -
 
-# Temporarily set cutoffChildAge = 15 (60% survival rates)
-getRole(df_all, cutoff=15)
+# The child survival rate is trending downward as the maximum age of children is lowered. I want to maximize the number of children with the constraint to maintain the child survival rate at least $60\%$, so I set the hyper parameter of child age to 15.
 
-# To have a sense of the distribution of TeamSize
-df_all.groupby(['Ticket']).first()['TeamSize'].value_counts()
+getRole(df_all, cutoff=15);
 
-# todo: are SibSp values unique within groups?
+# #### Adults traveling with children
+
 # Use this as an example: df_all.loc[df_all['Ticket_num']==17608,:]
-# Sanity check to see if children in the same travel team share the same SibSp value.
-# step 1. create a new column for children SibSp value only.
+# Step 1. Create a new column for the number of siblings of a child.
 df_all['childSibSp'] = np.where(df_all['Role'] == 'Child', df_all['SibSp'], 0)
 
-# step 2. is the childSibSp value unique within each travel group? Yes.
-df_all.groupby('Ticket')['childSibSp'].nunique().value_counts()
+# Step 2. Is the childSibSp value unique within a travel group? Answer: Yes
+logic = df_all['childSibSp']>0 # screen out parents (whose SibSp is at least one) 
+df_all.loc[logic,:].groupby('Ticket')['childSibSp'].nunique().value_counts()
 
-# So, We use childSibSp to identify siblings that is not covered by the 'Child'
-# definition.
+# So, We can use childSibSp to identify siblings of a child.
 
-# step 3. Broadcasting: in a group, let every entry can see the shared 'childSibSp' value.
+# stop here! ---------------------------------------------
+
+# Step 3. Broadcasting: in a group, let every entry can see the shared 'childSibSp' value.
 df_all['childSibSp'] = df_all.groupby('Ticket')['childSibSp'].transform('max')
 # 'cz otherwise it's 0 by default.
 
-# step 4. If an example's SibSp equals to the shared value, the example must
+# Step 4. If an example's SibSp equals to the shared value, the example must
 # from a elder child of age greater than the age limit for the child definition.
 logic = (df_all['SibSp'] != 0) & \
         (df_all['SibSp'] == df_all['childSibSp']) &\
@@ -241,6 +317,8 @@ df_all.loc[logic, 'ChildWAdult'] = np.where(
     'Yes',
     'No'
 )
+
+# #### Number of children per travel group
 
 # todo: How many children in this group?
 #Method 1.
