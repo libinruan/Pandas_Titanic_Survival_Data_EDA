@@ -19,11 +19,11 @@
 #
 # The main Python libraries I'm going to use are no more than Pandas, NumPy and Seaborn. Here is the outline of questions/task I'm going to deal with:
 #
-# - [Preliminary summary statistics](#anchor_pss)
-# - [Ticket combination: the evidence of travel companion](#anchor_TicketCombination)  
+# - [Preliminary summary statistics](#preliminary-summary-statistics)
+# - [Ticket combination: the evidence of travel companion](#ticket-combination)  
 #
 
-# #### Preliminary summary statistics <a name="anchor_pss"/>
+# #### Preliminary summary statistics
 # I'm going to focuse on checking to see the missing value, data type of each feature.
 
 # +
@@ -91,7 +91,7 @@ for i, df in enumerate([df_train, df_test]):
 
 # As pointed out in many exploratory data analysis on Kaggle Titanic data set, we have missing values in continuous features `Age` and `Fare` and nominal variables `Embarked` and `Cabin`. 
 
-# #### Ticket combination - use of regular expression <a name="anchor_TicketCombination"/>
+# #### Ticket combination
 
 # +
 # todo:  Ticket combination is the feature without any missing values.
@@ -953,5 +953,6 @@ plt.show()
 #     quantile(q=0.75) > 50)['Survived'].mean()
 # df_train.groupby(cols).filter(lambda x: x['Age'].\
 #     quantile(q=0.75) < 30)['Survived'].mean()
+
 
 
