@@ -13,16 +13,27 @@
 #     name: python3
 # ---
 
-# #### Advanced data processing recipes for reconstructing family roles in kaggle Titanic data sets
+# # Introduction
 
 # The value of demographic information implied by the ticket combination of Kaggle Titanic data sets has been widely understated. In this post I'm going to expose demographic information hidden in the join tabular data of the training set and test set offered by Kaggle. Hopefully in my future post I can build on it to evaluate to what extent these new features help us boost our prediction accuracy. It's worthnoting that if you are concerned about data leakage that araises in data processing before splitting the data set, you may find this [discussion](https://www.kaggle.com/c/titanic/discussion/41928#235524) interesting. For the purose that is more of winning the competition than generalization, I'll simply use the full data set as the basis of feature eningeering and leave the data leakage judgement for you.
 #
-# The main Python libraries I'm going to use are no more than Pandas, NumPy and Seaborn. Here is the outline of questions/task I'm going to deal with:
+# The main Python libraries I'm going to use are no more than Pandas, NumPy and Seaborn. Here is the outline of questions/tasks I'm going to deal with:
 #
 # - [Preliminary summary statistics](#preliminary-summary-statistics)
-# - [Ticket combination: the evidence of travel companion](#ticket-combination)  
-#
+# - [Ticket combination: the evidence of travel companion](#ticket-combination)
+# - [Size of travel group: the pool of travel family and non-biologically-related members](#size-travel-group)
+# - [Survival rate estimates for each travel group](#survival-rate-estimates)
+# - [Types of family roles](#family-role)
+# - [Adults traveling with children](#adult-travel-children)
+# - [Children traveling with parents](#child-travel-parents)
+# - [Who is the mother or father of a child](#mom-data-identification)
+# - [Did the child's mom survive](#check-mom-survive)
+# - [Apply KNN algorithm on the imputation of missing Embarked feature](#knn-missing-embarked)
+# - [Charting stacked survival count by gender across age groups --- Seaborn.Facegrid with custom functions recipe](#stacked-survival-count)
 
+# # Imputation and feature transformation
+
+# <a id="preliminary-summary-statistics"></a>
 # #### Preliminary summary statistics
 # I'm going to focuse on checking to see the missing value, data type of each feature.
 
@@ -91,6 +102,7 @@ for i, df in enumerate([df_train, df_test]):
 
 # As pointed out in many exploratory data analysis on Kaggle Titanic data set, we have missing values in continuous features `Age` and `Fare` and nominal variables `Embarked` and `Cabin`. 
 
+# <a id="ticket-combination"></a>
 # #### Ticket combination
 
 # +
@@ -144,6 +156,7 @@ temp.name = 'TeamSurvivalRate'
 # one-to-many merge on column Ticket
 df_all = pd.merge(df_all, temp, on='Ticket')
 
+# <a id="size-travel-group"></a>
 # #### Size of family and travel group - use of double groupby() & reset_index()
 # Check if there exist travel groups with members of size larger than 5.
 #
@@ -202,6 +215,7 @@ print(df_all.groupby(['Pclass', 'TeamSize'])['TeamSurvivalRate'].mean(). \
     reset_index().sort_values(by=['Pclass','TeamSurvivalRate']).groupby(['Pclass']).tail(3))
 
 
+# <a id="survival-rate-estimates"></a>
 # #### Credibility of group survival rate - use of apply()
 # The credibility of a group survival rate is measured in terms of the proportion of valid `Survived` feature. I will use it as weights to adjust the `TeamSurvivalRate` feature.
 
@@ -218,6 +232,7 @@ df_all = df_all.groupby('Ticket').apply(getCredibilitySurvivalRate)
 
 # -
 
+# <a id="family-role"></a>
 # #### Type of family roles - use of seaborn.FacetGrid & pandas.melt()
 # For flexibility in tuning hyper parameters like the age threshold for the definition of a child, I introduce the `cutoff` argument for the maximum child age and set the default cutoff age to 7. Then I do something like a grid search on the integer interval $[1, 29]$ to see the impact of the cutoff age configuratio on the estimate of survival rates by gender.
 
@@ -267,6 +282,8 @@ plt.show()
 
 getRole(df_all, cutoff=15);
 
+
+# <a id="adult-travel-children"></a>
 # #### Adults traveling with children - use of nampy.where() & unique()
 
 # Use this as an example: df_all.loc[df_all['Ticket_num']==17608,:]
@@ -299,6 +316,7 @@ df_all.loc[logic, 'Role'] = 'olderChild'
 
 print(df_all.loc[df_all['Ticket'] == 'PC 17608',['PassengerId', 'Survived', 'Name', 'Sex', 'Age', 'SibSp', 'Ticket', 'Role', 'childSibSp']])
 
+# <a id="mom-data-identification"></a>
 # #### Who is the female and the male household head - use of np.where()
 # The following code is going to identify the male and female household head if any. The role of the rest of members in the travel group will be left as it was.
 
@@ -329,6 +347,7 @@ df_all.loc[slice_index, 'Role'] = \
     df_all.loc[slice_logic, :]['Role'].apply(isMotherOrFather)
 # -
 
+# <a id="child-travel-parents"></a>
 # #### Children traveling with parents - np.where()
 # Here I am going to identify children traveling with parents. Note that I do need to identify women that travel with their children as in some kernel of this competition, because my approach to reconstruct the family role for mother embodies this consideration. To be specific, an instance with `Role` = 'Mother' implies she traveling with children.
 
@@ -340,7 +359,7 @@ df_all.loc[logic, 'ChildWAdult'] = np.where(
     'No'
 )
 
-cols = ['PassengerId', 'Survived', 'Name', 'Sex', 'Age', 'SibSp', 'Ticket', 'Role', 'ChildWAdult']
+cols = ['PassengerId', 'Survived', 'Name', 'Sex', 'Age', 'SibSp', 'Ticket', 'Role', 'Embarked', 'Fare']
 print(df_all.loc[df_all['Ticket'] == 'PC 17608', cols])
 
 # My approach to reconstruct the family role looks fine so far. However, a closer look reveals something fishy. The following code shows two couples were mistakenly classified as child (`PassengerId` = 10 and 123 along with `PassengerId` = 831 and 621). Besides, we may impute the missing value of age for `PassengerId` = 241 by her sibling's age (`PassengerId` = 112). They are couples of child marriage. I am going to fix this problem and conduct a quick imputation with the code following afte the table below.
@@ -388,6 +407,19 @@ df_all['NumYoungChild'] = df_all.groupby('Ticket')['Role'].\
 
 # -
 
+##
+df_all['youngestChildSurvived'] = 'Not Applicable'
+df_all.groupby('Ticket').\
+    apply(lambda x: ((x['Role'] == 'Child') & (x['Survived'] == 1)).sum() > 0).value_counts()
+
+
+
+
+
+
+
+# #
+
 # #### Do children with mom have higher survival rates than those with dad? - use of where() & transform()
 
 # Note: In Method 1, if you move ['Role'] inside transform's lambda function, it fails.
@@ -424,6 +456,8 @@ df_all.loc[index,:].groupby('Ticket').groups.keys()
 
 print(df_all.loc[df_all['Ticket']=='230080', cols])
 
+
+# <a id="check-mom-survive"></a>
 # #### Did the children's mom survive? - use of where() & np.select()
 
 # +
@@ -459,7 +493,6 @@ print(df_all.loc[df_all['Ticket']=='230080', cols])
 # The compact version based on the preceding methods 1 and 2.
 # So, we can do it automatically based on the experimental code block above.
 
-role = 'Mother'
 def isSurvived(df_all, role='Mother'):
     # Step 1. Identify a mother's life status
     conditions = [(df_all['Role'] != role),  # 'Not applicable'
@@ -471,10 +504,10 @@ def isSurvived(df_all, role='Mother'):
     s = 'is' + role + 'Survived'
     df_all[s] = np.select(conditions, choices)
     df_all[s] = df_all[s].where(df_all['Role'].eq(role)) \
-        .groupby(df_all['Ticket_num']).transform('first').fillna('not applicable')
+        .groupby(df_all['Ticket_num']).transform('first').fillna('Not Applicable')
     return df_all
 
-roles = ['Mother', 'Father']
+roles = ['Mother', 'Father', 'Child']
 for role in roles:
     isSurvived(df_all, role=role)
 
@@ -668,6 +701,7 @@ print(df_all.loc[:, cols + ['maxParch', 'minSibSp']].sort_values(by=['Ticket']).
 
 # -
 
+# <a id="knn-missing-embarked"></a>
 # #### Impute missing nominal feature Embarked with KNN algorithm - use of pandas.cut()
 
 # Impute missing EMBARKED values using K nearest neighbors algorithm
@@ -742,13 +776,25 @@ df_all['Fare'] = df_all.groupby(['Pclass','TeamSize'])['Fare']\
 
 print(df_all.loc[973, cols + ['Fare']])
 
+# #### Impute missing age, TeamSurvivalRate
+
+# +
+df_all.columns
+
+df_all['TeamSurvivalRate'] = df_all.groupby(['Pclass','TeamSize'])['TeamSurvivalRate'].apply(lambda x: x.fillna(x.median()))
+df_all['weightedSR'] = df_all['SRcredibility'] * df_all['TeamSurvivalRate']
+df_all['Age'] = df_all.groupby(['Sex', 'Pclass'])['Age'].apply(lambda x: x.fillna(x.median()))
+
+displayMissing(df_all)
+# -
+
 # Some observations:
 #
 # 0. Ticekt combination provides more information than Family surname.
 # 1. Even in the same family, the survival of female members seems irrelevant to that of male members. See Ticket#19950 for example.
 # 2. There exist records of travel groups formed by non-biological-relationship people (probably, friends or colleauges) with high survival rates.
 
-cols = ['Survived', 'Pclass', 'Ticket', 'Fare', 'Role', 'Age', 'Name']
+cols = ['Survived', 'Pclass', 'Ticket', 'Fare', 'Role', 'Age', 'Name', 'isChildSurvived']
 # The Davies has two children and two adults (one is maid). The youngest child is alive.
 print(df_all.loc[df_all['Ticket_num'] == 33112, cols])
 
@@ -758,7 +804,7 @@ print(df_all.loc[df_all['Ticket_num'] == 36928, cols])  # old family with adult 
 
 print(df_all.loc[df_all['Ticket_num'] == 236853, cols])  # couples without children
 
-print(df_all.loc[df_all['Ticket_num'] == 17608, cols])  # size of 6
+print(df_all.loc[df_all['Ticket_num'] == 17608, :])  # size of 6
 
 print(df_all.loc[df_all['Ticket_num'] == 3101295, cols]) # travel group with female household head
 
@@ -777,6 +823,11 @@ for i, g in df_all.groupby(['Pclass', 'Sex'])['Age'].groups.items():
 print(pd.DataFrame(tb).head(10).T)
 
 # Distribution of age by passenger class and gender
+
+df_all.iloc[:891,:].to_csv('c_train.csv', index=False)
+df_all.iloc[891:,:].to_csv('c_test.csv', index=False)
+
+# # Histograms by passenger class, sex, age groups
 
 # +
 import string
@@ -800,6 +851,7 @@ for ax in g.axes.flat:
 plt.show()
 # -
 
+# <a id="stacked-survival-count"></a>
 # #### Stacked hist plot of survived people by gender
 # Step 1. list the total number of survived people by gender and passenger class.
 
@@ -921,8 +973,8 @@ plt.show()
 # +
 def sbp(*args, **kwargs):
     data = kwargs.pop('data')
-    sns.barplot(x = data.Age, y = data.loc[data.Sex == 'female', 'Survived'], color = 'red', label = 'red')
-    sns.barplot(x = data.Age, y = data.loc[data.Sex == 'male', 'Survived'], color = 'blue', label = 'blue') 
+    sns.barplot(x = data.Age, y = data.loc[data.Sex == 'female', 'Survived'], color = 'red', label = 'Female')
+    sns.barplot(x = data.Age, y = data.loc[data.Sex == 'male', 'Survived'], color = 'blue', label = 'Male') 
     
 unpivoted['Age'] = unpivoted['Age'].astype(str) # This is the key statement for the following mapping works.
                                                 # It lets you to convert categorical to str.
@@ -942,17 +994,8 @@ for i, ax in enumerate(g.axes.flat):
     ax.set_xticklabels(labels, rotation=90) # set new labels
     ax.set_xlabel('Age')
 plt.show()
+# -
 
-# +
+# No more transparency issue undermines the visualization. Female and male bars are marked respectively in solid color. And the number of survived female passengers are seemingly stacked ontop of their male counterpart across age groups.  
 
-# # g.set_titles("Pclass {col_name} {row_name}") # trick for conditional title
-
-# # Group Selection Operation ----------------------------------------------------
-# cols = ['Deck', 'Pclass']
-# df_train.groupby(cols).filter(lambda x: x['Age'].\
-#     quantile(q=0.75) > 50)['Survived'].mean()
-# df_train.groupby(cols).filter(lambda x: x['Age'].\
-#     quantile(q=0.75) < 30)['Survived'].mean()
-
-
-
+# That's it. If you find the mining of demographic features or any of the Pandas and Seaborn trickes helpful, please upvote my post. I will dig on the Titanic survival prediction in my next post. See you later.
