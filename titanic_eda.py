@@ -28,6 +28,8 @@
 # - [Children traveling with parents](#child-travel-parents)
 # - [Who is the mother or father of a child](#mom-data-identification)
 # - [Did the child's mom survive](#check-mom-survive)
+#
+# There are two tasks not related to the data exploration but found worth noting for my future reference:
 # - [Apply KNN algorithm on the imputation of missing Embarked feature](#knn-missing-embarked)
 # - [Charting stacked survival count by gender across age groups --- Seaborn.Facegrid with custom functions recipe](#stacked-survival-count)
 
